@@ -36,24 +36,25 @@ export class PolymarketService {
 
   async getActiveMarkets(): Promise<Market[]> {
     try {
-      // Use CLOB API for markets with rate limiting
+      // Use Gamma API for active markets with rate limiting
       const response = await polymarketRateLimiter.execute(async () => {
-        return fetchWithTimeout(`${this.config.apiUrls.clob}/markets`, {}, 15000);
+        return fetchWithTimeout(
+          `${this.config.apiUrls.gamma}/markets?active=true&closed=false&limit=1000`,
+          {},
+          15000
+        );
       });
 
       if (!response.ok) {
         throw new Error(`API request failed: ${response.status}`);
       }
 
-      const result: any = await response.json();
-      const markets = result.data || result;
+      const markets: any = await response.json();
       
-      // Filter for active markets only
-      const activeMarkets = Array.isArray(markets) 
-        ? markets.filter((m: any) => m.active && !m.closed)
-        : [];
+      // Gamma API returns array directly, already filtered for active/open markets
+      const marketsList = Array.isArray(markets) ? markets : [];
       
-      return this.transformMarkets(activeMarkets);
+      return this.transformMarkets(marketsList);
     } catch (error) {
       logger.error('Error fetching active markets:', error);
       throw error;
@@ -74,7 +75,11 @@ export class PolymarketService {
 
   private async testConnection(): Promise<void> {
     const response = await polymarketRateLimiter.execute(async () => {
-      return fetchWithTimeout(`${this.config.apiUrls.clob}/markets`, {}, 10000);
+      return fetchWithTimeout(
+        `${this.config.apiUrls.gamma}/markets?limit=1`,
+        {},
+        10000
+      );
     });
     if (!response.ok) {
       throw new Error(`API test failed: ${response.status}`);
