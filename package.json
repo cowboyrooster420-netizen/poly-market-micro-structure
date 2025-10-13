@@ -1,0 +1,34 @@
+{
+  "name": "poly-early-bot",
+  "version": "1.0.0",
+  "description": "Early detection bot for Polymarket opportunities",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint src/**/*.ts",
+    "test": "jest"
+  },
+  "keywords": ["polymarket", "bot", "early", "detection"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "ws": "^8.14.2",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.6",
+    "@types/ws": "^8.5.9",
+    "@types/node-fetch": "^2.6.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3",
+    "eslint": "^8.56.0",
+    "@typescript-eslint/eslint-plugin": "^6.17.0",
+    "@typescript-eslint/parser": "^6.17.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
