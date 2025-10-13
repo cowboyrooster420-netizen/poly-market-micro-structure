@@ -172,7 +172,7 @@ export class EarlyBot {
   }
 
   private async refreshMarkets(): Promise<void> {
-    logger.debug('Refreshing tracked markets...');
+    logger.info('🔄 Scanning markets for opportunities...');
 
     try {
       // Get current high-volume markets
@@ -180,6 +180,22 @@ export class EarlyBot {
       const topMarkets = markets
         .sort((a, b) => b.volumeNum - a.volumeNum)
         .slice(0, this.config.maxMarketsToTrack);
+      
+      logger.info(`📊 Analyzing ${topMarkets.length} active markets...`);
+      
+      // DETECT SIGNALS from all markets
+      const signals = await this.signalDetector.detectSignals(topMarkets);
+      
+      // Process any detected signals
+      for (const signal of signals) {
+        await this.handleSignal(signal);
+      }
+      
+      if (signals.length > 0) {
+        logger.info(`🔔 Detected ${signals.length} signals in this scan`);
+      } else {
+        logger.info('✅ Scan complete - no signals detected (markets are stable)');
+      }
       
       const newMarketIds = new Set(topMarkets.map(m => m.id));
       const currentMarketIds = new Set(this.microstructureDetector.getTrackedMarkets());
