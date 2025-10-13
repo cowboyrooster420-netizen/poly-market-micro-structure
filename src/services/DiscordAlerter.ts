@@ -195,7 +195,7 @@ export class DiscordAlerter {
       color: alertMessage.color,
       fields: alertMessage.fields,
       footer: {
-        text: alertMessage.footer,
+        text: alertMessage.footer || 'Poly Early Bot',
       },
       timestamp: new Date(alertMessage.timestamp).toISOString(),
     };

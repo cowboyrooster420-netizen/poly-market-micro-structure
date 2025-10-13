@@ -111,7 +111,7 @@ export class OrderbookAnalyzer {
   private calculateLiquidityScore(orderbook: OrderbookData): number {
     const totalVolume = this.calculateTotalVolume(orderbook.bids) + this.calculateTotalVolume(orderbook.asks);
     const depth = Math.min(orderbook.bids.length, orderbook.asks.length);
-    const spreadPenalty = orderbook.spreadPercent || 0;
+    const spreadPenalty = orderbook.bestAsk > 0 ? (orderbook.spread / orderbook.bestAsk) * 100 : 0;
 
     // Score based on volume, depth, and tight spread
     let score = Math.min(100, (totalVolume / 1000) + (depth * 2));

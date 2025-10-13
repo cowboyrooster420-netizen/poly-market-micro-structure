@@ -45,7 +45,7 @@ export class PolymarketService {
         throw new Error(`API request failed: ${response.status}`);
       }
 
-      const result = await response.json();
+      const result: any = await response.json();
       const markets = result.data || result;
       
       // Filter for active markets only
@@ -170,8 +170,9 @@ export class PolymarketService {
         throw new Error(`Trades API request failed: ${response.status}`);
       }
 
-      const data = await response.json();
-      return this.transformTrades(data, marketId);
+      const data: any = await response.json();
+      const tradesArray = Array.isArray(data) ? data : [];
+      return this.transformTrades(tradesArray, marketId);
     } catch (error) {
       logger.error(`Error fetching trades for ${marketId}:`, error);
       return [];
@@ -274,7 +275,7 @@ export class PolymarketService {
       marketId,
       price: parseFloat(trade.price),
       volume: parseFloat(trade.size || trade.volume || '0'),
-      side: trade.side === 'buy' ? 'buy' : 'sell',
+      side: (trade.side === 'buy' ? 'buy' : 'sell') as 'buy' | 'sell',
       size: parseFloat(trade.size || '0'),
     })).sort((a, b) => b.timestamp - a.timestamp); // Most recent first
   }
