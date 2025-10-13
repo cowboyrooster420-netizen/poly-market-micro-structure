@@ -258,14 +258,14 @@ export class MicrostructureDetector {
 
   private processOrderFlowSignal(flowSignal: any, marketId: string): void {
     // Log order flow signals with different emoji based on severity
-    const emoji = {
+    const emoji: { [key: string]: string } = {
       'critical': '🚨',
       'high': '🔥',
       'medium': '⚡',
       'low': '💡'
     };
 
-    logger.info(`${emoji[flowSignal.severity]} Order Flow Signal:`, {
+    logger.info(`${emoji[flowSignal.severity] || '📊'} Order Flow Signal:`, {
       type: flowSignal.type,
       market: marketId.substring(0, 8) + '...',
       severity: flowSignal.severity,
