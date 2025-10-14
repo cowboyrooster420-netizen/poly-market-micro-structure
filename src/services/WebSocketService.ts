@@ -49,7 +49,7 @@ export class WebSocketService {
         this.isConnected = true;
         this.isConnecting = false;
         this.reconnectAttempts = 0;
-        logger.info('WebSocket connected successfully');
+        logger.info('🔌 WebSocket connected to Polymarket Real-Time Data Service');
         
         if (this.onConnectionHandler) {
           this.onConnectionHandler(true);
@@ -115,20 +115,28 @@ export class WebSocketService {
       return;
     }
 
+    // Polymarket Real-Time Data Service subscription format
     const subscribeMessage = {
-      type: 'subscribe',
-      channel: 'trades',
-      market: marketId,
-    };
-
-    const orderbookMessage = {
-      type: 'subscribe',
-      channel: 'book',
-      market: marketId,
+      subscriptions: [
+        {
+          topic: 'clob_market',
+          type: 'price_change',
+          filters: [marketId]
+        },
+        {
+          topic: 'clob_market', 
+          type: 'last_trade_price',
+          filters: [marketId]
+        },
+        {
+          topic: 'clob_market',
+          type: 'book',
+          filters: [marketId]
+        }
+      ]
     };
 
     this.sendMessage(subscribeMessage);
-    this.sendMessage(orderbookMessage);
     this.subscribedMarkets.add(marketId);
     
     logger.debug(`Subscribed to market: ${marketId}`);
@@ -137,20 +145,28 @@ export class WebSocketService {
   unsubscribeFromMarket(marketId: string): void {
     if (!this.isConnected) return;
 
+    // Polymarket Real-Time Data Service unsubscription format
     const unsubscribeMessage = {
-      type: 'unsubscribe',
-      channel: 'trades',
-      market: marketId,
-    };
-
-    const orderbookUnsubscribe = {
-      type: 'unsubscribe',
-      channel: 'book',
-      market: marketId,
+      unsubscriptions: [
+        {
+          topic: 'clob_market',
+          type: 'price_change',
+          filters: [marketId]
+        },
+        {
+          topic: 'clob_market', 
+          type: 'last_trade_price',
+          filters: [marketId]
+        },
+        {
+          topic: 'clob_market',
+          type: 'book',
+          filters: [marketId]
+        }
+      ]
     };
 
     this.sendMessage(unsubscribeMessage);
-    this.sendMessage(orderbookUnsubscribe);
     this.subscribedMarkets.delete(marketId);
     
     logger.debug(`Unsubscribed from market: ${marketId}`);
@@ -177,9 +193,22 @@ export class WebSocketService {
     return Array.from(this.subscribedMarkets);
   }
 
+  // Test connection without subscribing to anything
+  async testConnection(): Promise<boolean> {
+    try {
+      if (this.isConnected) return true;
+      
+      await this.connect();
+      return this.isConnected;
+    } catch (error) {
+      logger.error('WebSocket connection test failed:', error);
+      return false;
+    }
+  }
+
   private buildWebSocketUrl(): string {
-    // Official Polymarket CLOB WebSocket endpoint
-    return 'wss://ws-subscriptions-clob.polymarket.com/ws/';
+    // Official Polymarket Real-Time Data WebSocket endpoint (public, no auth required)
+    return 'wss://ws-live-data.polymarket.com';
   }
 
   private handleMessage(data: WebSocket.Data): void {
@@ -194,35 +223,51 @@ export class WebSocketService {
 
       const message = JSON.parse(rawData);
       
+      // Log all messages for debugging (first 200 chars)
+      logger.debug(`📨 WS Message: ${rawData.substring(0, 200)}${rawData.length > 200 ? '...' : ''}`);
+      
       // Basic validation - must be an object with a type/channel
       if (!message || typeof message !== 'object') {
         logger.warn('Invalid WebSocket message: not an object');
         return;
       }
 
-      const messageType = message.type || message.channel;
-      if (!messageType || typeof messageType !== 'string') {
-        logger.warn('Invalid WebSocket message: missing or invalid type/channel');
-        return;
-      }
-      
-      switch (messageType) {
-        case 'trade':
-        case 'trades':
-          this.handleTradeMessage(message);
-          break;
-        case 'book':
-        case 'orderbook':
-          this.handleOrderbookMessage(message);
-          break;
-        case 'subscription':
+      // Polymarket Real-Time Data Service message format
+      if (message.topic && message.type) {
+        // Handle subscription confirmations
+        if (message.type === 'subscribed' || message.type === 'unsubscribed') {
           this.handleSubscriptionMessage(message);
-          break;
-        case 'error':
-          this.handleErrorMessage(message);
-          break;
-        default:
-          logger.debug('Unknown message type:', messageType);
+          return;
+        }
+        
+        // Handle market data messages
+        if (message.topic === 'clob_market') {
+          switch (message.type) {
+            case 'last_trade_price':
+              this.handleTradeMessage(message);
+              break;
+            case 'book':
+              this.handleOrderbookMessage(message);
+              break;
+            case 'price_change':
+              this.handlePriceChangeMessage(message);
+              break;
+            default:
+              logger.debug('Unknown clob_market message type:', message.type);
+          }
+        }
+      } else {
+        // Fallback for other message formats
+        const messageType = message.type || message.channel;
+        if (messageType) {
+          switch (messageType) {
+            case 'error':
+              this.handleErrorMessage(message);
+              break;
+            default:
+              logger.debug('Unknown message format:', message);
+          }
+        }
       }
     } catch (error) {
       logger.error('Error parsing WebSocket message:', error);
@@ -234,32 +279,36 @@ export class WebSocketService {
     if (!this.onTickHandler) return;
 
     try {
+      // Polymarket Real-Time Data Service format
+      const data = message.data || message;
+      
       // Basic validation for required trade fields
-      if (!message.price || !message.market && !message.asset_id) {
-        logger.warn('Invalid trade message: missing required fields');
+      if (!data.price || (!data.market && !data.asset_id)) {
+        logger.warn('Invalid trade message: missing required fields', data);
         return;
       }
 
-      const price = parseFloat(message.price);
-      const volume = parseFloat(message.size || message.volume || '0');
-      const size = parseFloat(message.size || '0');
+      const price = parseFloat(data.price);
+      const size = parseFloat(data.trade_size || data.size || '0');
+      const volume = size; // In Real-Time service, trade_size is the actual size
 
       // Validate parsed numbers
-      if (isNaN(price) || price <= 0 || isNaN(volume) || isNaN(size)) {
-        logger.warn('Invalid trade message: invalid numeric values');
+      if (isNaN(price) || price <= 0 || isNaN(size)) {
+        logger.warn('Invalid trade message: invalid numeric values', data);
         return;
       }
 
       // Transform Polymarket trade data to our TickData format
       const tick: TickData = {
-        timestamp: message.timestamp || Date.now(),
-        marketId: message.market || message.asset_id,
+        timestamp: data.timestamp ? new Date(data.timestamp).getTime() : Date.now(),
+        marketId: data.market || data.asset_id,
         price,
         volume,
-        side: message.side === 'buy' ? 'buy' : 'sell',
+        side: data.side === 'buy' ? 'buy' : 'sell',
         size,
       };
 
+      logger.debug(`Trade received: ${tick.marketId.substring(0, 8)}... $${tick.price} size:${tick.size}`);
       this.onTickHandler(tick);
     } catch (error) {
       logger.error('Error processing trade message:', error);
@@ -270,15 +319,18 @@ export class WebSocketService {
     if (!this.onOrderbookHandler) return;
 
     try {
+      // Polymarket Real-Time Data Service format
+      const data = message.data || message;
+      
       // Basic validation for orderbook message
-      if (!message.market && !message.asset_id) {
-        logger.warn('Invalid orderbook message: missing market identifier');
+      if (!data.market && !data.asset_id) {
+        logger.warn('Invalid orderbook message: missing market identifier', data);
         return;
       }
 
       // Ensure bids and asks are arrays
-      const rawBids = Array.isArray(message.bids) ? message.bids : [];
-      const rawAsks = Array.isArray(message.asks) ? message.asks : [];
+      const rawBids = Array.isArray(data.buy) ? data.buy : Array.isArray(data.bids) ? data.bids : [];
+      const rawAsks = Array.isArray(data.sell) ? data.sell : Array.isArray(data.asks) ? data.asks : [];
 
       // Transform and validate bid/ask data
       const bids: OrderbookLevel[] = rawBids
@@ -296,7 +348,8 @@ export class WebSocketService {
             volume: price * size,
           };
         })
-        .filter((bid: any) => bid !== null); // Remove invalid entries
+        .filter((bid: any) => bid !== null)
+        .sort((a: OrderbookLevel, b: OrderbookLevel) => b.price - a.price); // Sort bids descending
 
       const asks: OrderbookLevel[] = rawAsks
         .map((ask: any) => {
@@ -313,7 +366,8 @@ export class WebSocketService {
             volume: price * size,
           };
         })
-        .filter((ask: any) => ask !== null); // Remove invalid entries
+        .filter((ask: any) => ask !== null)
+        .sort((a: OrderbookLevel, b: OrderbookLevel) => a.price - b.price); // Sort asks ascending
 
       const bestBid = bids.length > 0 ? bids[0].price : 0;
       const bestAsk = asks.length > 0 ? asks[0].price : 0;
@@ -321,8 +375,8 @@ export class WebSocketService {
       const midPrice = bestAsk > 0 && bestBid > 0 ? (bestAsk + bestBid) / 2 : 0;
 
       const orderbook: OrderbookData = {
-        marketId: message.market || message.asset_id,
-        timestamp: message.timestamp || Date.now(),
+        marketId: data.market || data.asset_id,
+        timestamp: data.timestamp ? new Date(data.timestamp).getTime() : Date.now(),
         bids,
         asks,
         spread,
@@ -331,6 +385,7 @@ export class WebSocketService {
         bestAsk,
       };
 
+      logger.debug(`Orderbook received: ${orderbook.marketId.substring(0, 8)}... ${bids.length} bids, ${asks.length} asks, spread: ${spread.toFixed(4)}`);
       this.onOrderbookHandler(orderbook);
     } catch (error) {
       logger.error('Error processing orderbook message:', error);
@@ -338,11 +393,20 @@ export class WebSocketService {
   }
 
   private handleSubscriptionMessage(message: any): void {
-    if (message.status === 'subscribed') {
-      logger.debug(`Successfully subscribed to ${message.channel} for ${message.market}`);
-    } else if (message.status === 'error') {
-      logger.error(`Subscription error: ${message.error}`);
+    if (message.type === 'subscribed') {
+      logger.info(`✅ Successfully subscribed to ${message.topic}:${message.message_type || 'all'}`);
+    } else if (message.type === 'unsubscribed') {
+      logger.info(`❌ Successfully unsubscribed from ${message.topic}:${message.message_type || 'all'}`);
+    } else if (message.error) {
+      logger.error(`Subscription error: ${message.error}`, message);
     }
+  }
+
+  private handlePriceChangeMessage(message: any): void {
+    // Price change messages can be used for additional market monitoring
+    // but for now we'll just log them for debugging
+    const data = message.data || message;
+    logger.debug(`Price change: ${(data.market || data.asset_id || 'unknown').substring(0, 8)}...`);
   }
 
   private handleErrorMessage(message: any): void {

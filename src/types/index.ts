@@ -12,6 +12,11 @@ export interface Market {
   tags?: string[];
   createdAt?: string;
   updatedAt?: string;
+  metadata?: {
+    assetIds?: string[];
+    conditionId?: string;
+    [key: string]: any;
+  };
 }
 
 export interface EarlySignal {

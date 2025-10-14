@@ -23,7 +23,7 @@ export class EarlyBot {
       logLevel: process.env.LOG_LEVEL || 'info',
       apiUrls: {
         clob: process.env.CLOB_API_URL || 'https://clob.polymarket.com',
-        gamma: process.env.DATA_API_URL || 'https://data-api.polymarket.com',
+        gamma: process.env.GAMMA_API_URL || 'https://gamma-api.polymarket.com',
       },
       microstructure: {
         orderbookImbalanceThreshold: this.parseFloatWithBounds(process.env.ORDERBOOK_IMBALANCE_THRESHOLD, 0.3, 0, 1),
@@ -124,9 +124,24 @@ export class EarlyBot {
     
     logger.info(`Found ${topMarkets.length} markets above volume threshold`);
     
-    // Track top markets
-    const marketIds = topMarkets.map(m => m.id);
-    this.microstructureDetector.trackMarkets(marketIds);
+    // Check how many markets have asset IDs for WebSocket subscriptions
+    const marketsWithAssets = topMarkets.filter(m => m.metadata?.assetIds?.length > 0).length;
+    logger.info(`${marketsWithAssets}/${topMarkets.length} markets have asset IDs for WebSocket subscriptions`);
+    
+    if (topMarkets.length > 0) {
+      logger.info(`Top market example: "${topMarkets[0].question?.substring(0, 50)}..." - Volume: $${topMarkets[0].volumeNum.toFixed(0)}`);
+      
+      if (topMarkets[0].metadata?.assetIds?.length > 0) {
+        logger.info(`Asset IDs: [${topMarkets[0].metadata.assetIds.map(id => id.substring(0, 8) + '...').join(', ')}]`);
+      }
+    }
+    
+    // Track top markets with asset IDs for WebSocket subscriptions
+    const marketsToTrack = topMarkets.map(m => ({
+      id: m.id,
+      assetIds: m.metadata?.assetIds || []
+    }));
+    this.microstructureDetector.trackMarkets(marketsToTrack);
 
     // Set up periodic market refresh
     this.intervalId = setInterval(async () => {
@@ -203,7 +218,11 @@ export class EarlyBot {
       // Add new markets
       const marketsToAdd = topMarkets.filter(m => !currentMarketIds.has(m.id));
       if (marketsToAdd.length > 0) {
-        this.microstructureDetector.trackMarkets(marketsToAdd.map(m => m.id));
+        const newMarketsToTrack = marketsToAdd.map(m => ({
+          id: m.id,
+          assetIds: m.metadata?.assetIds || []
+        }));
+        this.microstructureDetector.trackMarkets(newMarketsToTrack);
         logger.info(`Added ${marketsToAdd.length} new markets for tracking`);
       }
 
@@ -281,8 +300,17 @@ export class EarlyBot {
 
   // Public methods for external control
   async addMarket(marketId: string): Promise<void> {
-    this.microstructureDetector.trackMarket(marketId);
-    logger.info(`Manually added market: ${marketId}`);
+    // Try to get market details to extract asset IDs
+    try {
+      const market = await this.polymarketService.getMarketById(marketId);
+      const assetIds = market?.metadata?.assetIds || [];
+      this.microstructureDetector.trackMarket(marketId, assetIds);
+      logger.info(`Manually added market: ${marketId.substring(0, 8)}... with ${assetIds.length} assets`);
+    } catch (error) {
+      // Fallback to just market ID if can't fetch details
+      this.microstructureDetector.trackMarket(marketId);
+      logger.info(`Manually added market: ${marketId.substring(0, 8)}... (no asset IDs)`);
+    }
   }
 
   async removeMarket(marketId: string): Promise<void> {

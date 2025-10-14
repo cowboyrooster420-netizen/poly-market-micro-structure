@@ -100,13 +100,23 @@ export class MicrostructureDetector {
     logger.info('MicrostructureDetector stopped');
   }
 
-  trackMarket(marketId: string): void {
+  trackMarket(marketId: string, assetIds?: string[]): void {
     if (this.trackedMarkets.has(marketId)) return;
 
     this.trackedMarkets.add(marketId);
-    this.webSocketService.subscribeToMarket(marketId);
     
-    logger.debug(`Now tracking market: ${marketId}`);
+    // Subscribe using asset IDs if available, otherwise use market ID
+    if (assetIds && assetIds.length > 0) {
+      for (const assetId of assetIds) {
+        this.webSocketService.subscribeToMarket(assetId);
+        logger.debug(`Subscribed to asset: ${assetId} for market: ${marketId.substring(0, 8)}...`);
+      }
+    } else {
+      this.webSocketService.subscribeToMarket(marketId);
+      logger.debug(`Subscribed to market: ${marketId.substring(0, 8)}...`);
+    }
+    
+    logger.debug(`Now tracking market: ${marketId.substring(0, 8)}...`);
   }
 
   untrackMarket(marketId: string): void {
@@ -118,9 +128,9 @@ export class MicrostructureDetector {
     logger.debug(`Stopped tracking market: ${marketId}`);
   }
 
-  trackMarkets(marketIds: string[]): void {
-    for (const marketId of marketIds) {
-      this.trackMarket(marketId);
+  trackMarkets(markets: { id: string; assetIds?: string[] }[]): void {
+    for (const market of markets) {
+      this.trackMarket(market.id, market.assetIds);
     }
   }
 

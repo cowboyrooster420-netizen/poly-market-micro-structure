@@ -92,6 +92,9 @@ export class PolymarketService {
 
   private transformMarket(data: any): Market | null {
     try {
+      // Extract asset IDs for WebSocket subscriptions
+      const assetIds = data.tokens ? data.tokens.map((t: any) => t.token_id).filter(Boolean) : [];
+      
       return {
         id: data.condition_id || data.id,
         question: data.question || data.title || 'Unknown Market',
@@ -106,6 +109,11 @@ export class PolymarketService {
         tags: data.tags,
         createdAt: data.created_at || data.createdAt,
         updatedAt: data.updated_at || data.updatedAt,
+        // Add asset IDs for WebSocket subscriptions
+        metadata: {
+          assetIds: assetIds,
+          conditionId: data.condition_id,
+        }
       };
     } catch (error) {
       logger.warn('Failed to transform market data:', error);
