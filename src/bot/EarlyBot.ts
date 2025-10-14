@@ -125,14 +125,15 @@ export class EarlyBot {
     logger.info(`Found ${topMarkets.length} markets above volume threshold`);
     
     // Check how many markets have asset IDs for WebSocket subscriptions
-    const marketsWithAssets = topMarkets.filter(m => m.metadata?.assetIds?.length > 0).length;
+    const marketsWithAssets = topMarkets.filter(m => m.metadata?.assetIds && m.metadata.assetIds.length > 0).length;
     logger.info(`${marketsWithAssets}/${topMarkets.length} markets have asset IDs for WebSocket subscriptions`);
     
     if (topMarkets.length > 0) {
       logger.info(`Top market example: "${topMarkets[0].question?.substring(0, 50)}..." - Volume: $${topMarkets[0].volumeNum.toFixed(0)}`);
       
-      if (topMarkets[0].metadata?.assetIds?.length > 0) {
-        logger.info(`Asset IDs: [${topMarkets[0].metadata.assetIds.map(id => id.substring(0, 8) + '...').join(', ')}]`);
+      const firstMarketAssets = topMarkets[0].metadata?.assetIds;
+      if (firstMarketAssets && firstMarketAssets.length > 0) {
+        logger.info(`Asset IDs: [${firstMarketAssets.map(id => id.substring(0, 8) + '...').join(', ')}]`);
       }
     }
     
