@@ -51,6 +51,7 @@ export interface MarketMetrics {
   volume24h: number;
   volumeChange: number;
   priceChange: Record<string, number>;
+  prices: number[]; // Store current prices for next comparison
   activityScore: number;
   lastUpdated: number;
 }

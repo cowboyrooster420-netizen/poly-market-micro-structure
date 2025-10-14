@@ -24,6 +24,12 @@ export class SignalDetector {
   async detectSignals(markets: Market[]): Promise<EarlySignal[]> {
     const signals: EarlySignal[] = [];
     const currentTime = Date.now();
+    
+    let newMarketCount = 0;
+    let volumeSpikeCount = 0;
+    let priceMovementCount = 0;
+    let unusualActivityCount = 0;
+    let marketsWithHistory = 0;
 
     for (const market of markets) {
       // Skip markets below volume threshold
@@ -33,22 +39,46 @@ export class SignalDetector {
 
       // Update market metrics
       this.updateMarketMetrics(market, currentTime);
+      
+      const history = this.marketHistory.get(market.id);
+      if (history && history.length > 1) {
+        marketsWithHistory++;
+      }
 
       // Detect various signal types
       const newMarketSignal = this.detectNewMarket(market, currentTime);
-      if (newMarketSignal) signals.push(newMarketSignal);
+      if (newMarketSignal) {
+        signals.push(newMarketSignal);
+        newMarketCount++;
+      }
 
       const volumeSpikeSignal = this.detectVolumeSpike(market, currentTime);
-      if (volumeSpikeSignal) signals.push(volumeSpikeSignal);
+      if (volumeSpikeSignal) {
+        signals.push(volumeSpikeSignal);
+        volumeSpikeCount++;
+      }
 
       const priceMovementSignal = this.detectPriceMovement(market, currentTime);
-      if (priceMovementSignal) signals.push(priceMovementSignal);
+      if (priceMovementSignal) {
+        signals.push(priceMovementSignal);
+        priceMovementCount++;
+      }
 
       const unusualActivitySignal = this.detectUnusualActivity(market, currentTime);
-      if (unusualActivitySignal) signals.push(unusualActivitySignal);
+      if (unusualActivitySignal) {
+        signals.push(unusualActivitySignal);
+        unusualActivityCount++;
+      }
     }
 
     this.lastScanTime = currentTime;
+    
+    // Debug logging to show detection stats
+    logger.debug(`Detection stats: ${marketsWithHistory} markets with history, checked ${markets.length} markets`);
+    if (signals.length === 0) {
+      logger.debug(`No signals found - new:${newMarketCount}, volume:${volumeSpikeCount}, price:${priceMovementCount}, activity:${unusualActivityCount}`);
+    }
+    
     return signals;
   }
 
@@ -100,12 +130,15 @@ export class SignalDetector {
     const history = this.marketHistory.get(marketId)!;
     const previousMetrics = history[history.length - 1];
 
+    const currentPrices = market.outcomePrices.map(p => parseFloat(p));
+    
     const currentMetrics: MarketMetrics = {
       marketId,
       volume24h: market.volumeNum,
       volumeChange: previousMetrics ? 
         ((market.volumeNum - previousMetrics.volume24h) / previousMetrics.volume24h) * 100 : 0,
-      priceChange: this.calculatePriceChange(market, previousMetrics),
+      priceChange: this.calculatePriceChange(currentPrices, previousMetrics),
+      prices: currentPrices,
       activityScore: this.calculateActivityScore(market, previousMetrics),
       lastUpdated: timestamp,
     };
@@ -124,8 +157,10 @@ export class SignalDetector {
 
     const createdTime = new Date(market.createdAt).getTime();
     const oneHourAgo = timestamp - (60 * 60 * 1000);
+    const ageMinutes = (timestamp - createdTime) / (60 * 1000);
 
     if (createdTime > oneHourAgo && market.volumeNum > this.config.minVolumeThreshold * 2) {
+      logger.info(`🚨 NEW MARKET: ${market.question?.substring(0, 50)} - ${ageMinutes.toFixed(0)}min old, $${market.volumeNum.toFixed(0)} volume`);
       return {
         marketId: market.id,
         market,
@@ -148,9 +183,16 @@ export class SignalDetector {
 
     const recent = history.slice(-5);
     const avgVolume = recent.reduce((sum, m) => sum + m.volume24h, 0) / recent.length;
+    const volumeMultiplier = avgVolume > 0 ? market.volumeNum / avgVolume : 0;
+    
+    // Debug logging for top markets
+    if (market.volumeNum > this.config.minVolumeThreshold * 5) {
+      logger.debug(`Volume check - ${market.question?.substring(0, 40)}: current=$${market.volumeNum.toFixed(0)}, avg=$${avgVolume.toFixed(0)}, multiplier=${volumeMultiplier.toFixed(2)}x`);
+    }
     
     // Detect 3x volume spike
     if (market.volumeNum > avgVolume * 3 && market.volumeNum > this.config.minVolumeThreshold * 5) {
+      logger.info(`🚨 VOLUME SPIKE: ${market.question?.substring(0, 50)} - ${volumeMultiplier.toFixed(1)}x increase!`);
       return {
         marketId: market.id,
         market,
@@ -173,11 +215,18 @@ export class SignalDetector {
     if (!history || history.length < 3) return null;
 
     const latest = history[history.length - 1];
+    const priceChanges = Object.values(latest.priceChange);
     
     // Look for significant price changes (>10% in short time)
-    const maxPriceChange = Math.max(...Object.values(latest.priceChange).map(Math.abs));
+    const maxPriceChange = priceChanges.length > 0 ? Math.max(...priceChanges.map(Math.abs)) : 0;
+    
+    // Debug log significant price movements (>5%)
+    if (maxPriceChange > 5) {
+      logger.debug(`Price movement - ${market.question?.substring(0, 40)}: ${maxPriceChange.toFixed(2)}% change, volume=$${market.volumeNum.toFixed(0)}`);
+    }
     
     if (maxPriceChange > 10 && market.volumeNum > this.config.minVolumeThreshold) {
+      logger.info(`🚨 PRICE MOVEMENT: ${market.question?.substring(0, 50)} - ${maxPriceChange.toFixed(1)}% change!`);
       return {
         marketId: market.id,
         market,
@@ -218,16 +267,19 @@ export class SignalDetector {
     return null;
   }
 
-  private calculatePriceChange(market: Market, previousMetrics?: MarketMetrics): Record<string, number> {
-    if (!previousMetrics) return {};
+  private calculatePriceChange(currentPrices: number[], previousMetrics?: MarketMetrics): Record<string, number> {
+    if (!previousMetrics || !previousMetrics.prices) return {};
 
     const changes: Record<string, number> = {};
     
-    market.outcomePrices.forEach((price, index) => {
-      const currentPrice = parseFloat(price);
-      // For price change calculation, we'd need previous prices stored
-      // This is a simplified version
-      changes[`outcome_${index}`] = 0; // Placeholder
+    currentPrices.forEach((currentPrice, index) => {
+      const previousPrice = previousMetrics.prices[index];
+      if (previousPrice && previousPrice > 0) {
+        const change = ((currentPrice - previousPrice) / previousPrice) * 100;
+        changes[`outcome_${index}`] = change;
+      } else {
+        changes[`outcome_${index}`] = 0;
+      }
     });
 
     return changes;
