@@ -1,7 +1,10 @@
 import { BotConfig, EarlySignal, Market, MarketMetrics, MicrostructureSignal, TickData, OrderbookData } from '../types';
 import { OrderbookAnalyzer } from './OrderbookAnalyzer';
 import { TechnicalIndicatorCalculator } from './TechnicalIndicators';
+import { statisticalWorkerService } from './StatisticalWorkerService';
+import { configManager } from '../config/ConfigManager';
 import { logger } from '../utils/logger';
+import { advancedLogger } from '../utils/AdvancedLogger';
 
 export class SignalDetector {
   private config: BotConfig;
@@ -14,10 +17,24 @@ export class SignalDetector {
     this.config = config;
     this.orderbookAnalyzer = new OrderbookAnalyzer(config);
     this.technicalIndicators = new TechnicalIndicatorCalculator(config);
+    
+    // Subscribe to configuration changes
+    configManager.onConfigChange('signal_detector', this.onConfigurationChange.bind(this));
   }
 
   async initialize(): Promise<void> {
-    logger.debug('Initializing signal detector...');
+    const systemConfig = configManager.getConfig();
+    
+    advancedLogger.info('Initializing signal detector with configuration', {
+      component: 'signal_detector',
+      operation: 'initialize',
+      metadata: {
+        volumeThreshold: systemConfig.detection.signals.volumeSpike.multiplier,
+        priceThreshold: systemConfig.detection.signals.priceMovement.percentageThreshold,
+        correlationThreshold: systemConfig.detection.signals.crossMarketCorrelation.correlationThreshold
+      }
+    });
+    
     this.lastScanTime = Date.now();
   }
 
@@ -190,8 +207,11 @@ export class SignalDetector {
       logger.debug(`Volume check - ${market.question?.substring(0, 40)}: current=$${market.volumeNum.toFixed(0)}, avg=$${avgVolume.toFixed(0)}, multiplier=${volumeMultiplier.toFixed(2)}x`);
     }
     
-    // Detect 3x volume spike
-    if (market.volumeNum > avgVolume * 3 && market.volumeNum > this.config.minVolumeThreshold * 5) {
+    // Detect volume spike using configuration threshold
+    const systemConfig = configManager.getConfig();
+    const multiplierThreshold = systemConfig.detection.signals.volumeSpike.multiplier;
+    
+    if (market.volumeNum > avgVolume * multiplierThreshold && market.volumeNum > this.config.minVolumeThreshold * 5) {
       logger.info(`🚨 VOLUME SPIKE: ${market.question?.substring(0, 50)} - ${volumeMultiplier.toFixed(1)}x increase!`);
       return {
         marketId: market.id,
@@ -225,7 +245,10 @@ export class SignalDetector {
       logger.debug(`Price movement - ${market.question?.substring(0, 40)}: ${maxPriceChange.toFixed(2)}% change, volume=$${market.volumeNum.toFixed(0)}`);
     }
     
-    if (maxPriceChange > 10 && market.volumeNum > this.config.minVolumeThreshold) {
+    const systemConfig = configManager.getConfig();
+    const priceThreshold = systemConfig.detection.signals.priceMovement.percentageThreshold;
+    
+    if (maxPriceChange > priceThreshold && market.volumeNum > this.config.minVolumeThreshold) {
       logger.info(`🚨 PRICE MOVEMENT: ${market.question?.substring(0, 50)} - ${maxPriceChange.toFixed(1)}% change!`);
       return {
         marketId: market.id,
@@ -309,5 +332,223 @@ export class SignalDetector {
     else if (priceBalance < 0.3) score += 10;
 
     return Math.min(100, score);
+  }
+
+  /**
+   * Handle configuration changes
+   */
+  private onConfigurationChange(newConfig: any): void {
+    try {
+      advancedLogger.info('Signal detector configuration updated', {
+        component: 'signal_detector',
+        operation: 'config_change',
+        metadata: {
+          volumeMultiplier: newConfig.detection.signals.volumeSpike.multiplier,
+          priceThreshold: newConfig.detection.signals.priceMovement.percentageThreshold,
+          correlationThreshold: newConfig.detection.signals.crossMarketCorrelation.correlationThreshold
+        }
+      });
+    } catch (error) {
+      advancedLogger.error('Error handling signal detector configuration change', error as Error, {
+        component: 'signal_detector',
+        operation: 'config_change'
+      });
+    }
+  }
+
+  /**
+   * Perform intensive cross-market correlation analysis using worker threads
+   */
+  public async detectCrossMarketCorrelations(markets: Market[]): Promise<EarlySignal[]> {
+    const signals: EarlySignal[] = [];
+    
+    if (markets.length < 2) {
+      return signals;
+    }
+
+    try {
+      // Extract volume time series for each market
+      const volumeSeries = new Map<string, number[]>();
+      const priceSeries = new Map<string, number[]>();
+      
+      for (const market of markets) {
+        const history = this.marketHistory.get(market.id);
+        if (history && history.length >= 10) {
+          volumeSeries.set(market.id, history.map(h => h.volume24h));
+          // Use first outcome price as representative price
+          const priceHistory = history.map(h => h.prices[0] || 0.5);
+          priceSeries.set(market.id, priceHistory);
+        }
+      }
+
+      // Analyze correlations using worker threads for CPU-intensive calculations
+      const marketIds = Array.from(volumeSeries.keys());
+      const correlationPromises: Promise<any>[] = [];
+
+      for (let i = 0; i < marketIds.length; i++) {
+        for (let j = i + 1; j < marketIds.length; j++) {
+          const market1Id = marketIds[i];
+          const market2Id = marketIds[j];
+          
+          const volumes1 = volumeSeries.get(market1Id)!;
+          const volumes2 = volumeSeries.get(market2Id)!;
+          const prices1 = priceSeries.get(market1Id)!;
+          const prices2 = priceSeries.get(market2Id)!;
+
+          // Use worker threads for correlation calculation
+          const volumeCorrelationPromise = statisticalWorkerService.calculateCorrelation(
+            volumes1, volumes2, 'pearson'
+          ).then(result => ({ type: 'volume', market1Id, market2Id, ...result }));
+
+          const priceCorrelationPromise = statisticalWorkerService.calculateCorrelation(
+            prices1, prices2, 'pearson'
+          ).then(result => ({ type: 'price', market1Id, market2Id, ...result }));
+
+          correlationPromises.push(volumeCorrelationPromise, priceCorrelationPromise);
+        }
+      }
+
+      const correlationResults = await Promise.all(correlationPromises);
+      
+      // Process correlation results and generate signals
+      const systemConfig = configManager.getConfig();
+      const correlationThreshold = systemConfig.detection.signals.crossMarketCorrelation.correlationThreshold;
+
+      for (const result of correlationResults) {
+        if (result.isSignificant && Math.abs(result.correlation) > correlationThreshold) {
+          const market1 = markets.find(m => m.id === result.market1Id);
+          const market2 = markets.find(m => m.id === result.market2Id);
+          
+          if (market1 && market2) {
+            const signal: EarlySignal = {
+              marketId: result.market1Id,
+              market: market1,
+              signalType: 'coordinated_cross_market',
+              confidence: Math.abs(result.correlation),
+              timestamp: Date.now(),
+              metadata: {
+                correlationType: result.type,
+                correlatedMarketId: result.market2Id,
+                correlatedMarketQuestion: market2.question?.substring(0, 50),
+                correlationCoefficient: result.correlation,
+                correlationMethod: result.method,
+                significanceLevel: result.significanceLevel,
+                signalSource: 'worker_thread_correlation_analysis'
+              }
+            };
+            
+            signals.push(signal);
+            
+            advancedLogger.info(`High correlation detected: ${result.type}`, {
+              component: 'signal_detector',
+              operation: 'cross_market_correlation',
+              metadata: {
+                correlation: result.correlation,
+                market1: market1.question?.substring(0, 30),
+                market2: market2.question?.substring(0, 30),
+                correlationType: result.type
+              }
+            });
+          }
+        }
+      }
+
+    } catch (error) {
+      advancedLogger.error('Error in cross-market correlation analysis', error as Error, {
+        component: 'signal_detector',
+        operation: 'cross_market_correlation'
+      });
+    }
+
+    return signals;
+  }
+
+  /**
+   * Perform statistical anomaly detection using worker threads
+   */
+  public async detectStatisticalAnomalies(market: Market): Promise<EarlySignal | null> {
+    try {
+      const history = this.marketHistory.get(market.id);
+      if (!history || history.length < 30) {
+        return null;
+      }
+
+      // Extract time series data
+      const volumes = history.map(h => h.volume24h);
+      const activityScores = history.map(h => h.activityScore);
+      
+      // Use worker threads for intensive anomaly detection
+      const volumeAnomalies = await statisticalWorkerService.detectAnomalies(volumes);
+      const activityAnomalies = await statisticalWorkerService.detectAnomalies(activityScores);
+      
+      // Check if current values are anomalous
+      const currentVolume = market.volumeNum;
+      const currentActivity = history[history.length - 1]?.activityScore || 0;
+      
+      const isVolumeAnomaly = volumeAnomalies.zScoreAnomalies.includes(currentVolume) ||
+                             volumeAnomalies.isolationForestAnomalies.some(a => a.value === currentVolume);
+                             
+      const isActivityAnomaly = activityAnomalies.zScoreAnomalies.includes(currentActivity);
+      
+      if (isVolumeAnomaly || isActivityAnomaly) {
+        const confidence = Math.min(0.95, 
+          (isVolumeAnomaly ? 0.5 : 0) + (isActivityAnomaly ? 0.45 : 0)
+        );
+        
+        return {
+          marketId: market.id,
+          market,
+          signalType: 'unusual_activity',
+          confidence,
+          timestamp: Date.now(),
+          metadata: {
+            anomalyTypes: [
+              ...(isVolumeAnomaly ? ['volume_anomaly'] : []),
+              ...(isActivityAnomaly ? ['activity_anomaly'] : [])
+            ],
+            volumeAnomalies: volumeAnomalies.zScoreAnomalies.length,
+            activityAnomalies: activityAnomalies.zScoreAnomalies.length,
+            isolationForestDetections: volumeAnomalies.isolationForestAnomalies.length,
+            signalSource: 'worker_thread_anomaly_detection'
+          }
+        };
+      }
+
+    } catch (error) {
+      advancedLogger.error('Error in statistical anomaly detection', error as Error, {
+        component: 'signal_detector',
+        operation: 'statistical_anomaly_detection',
+        marketId: market.id
+      });
+    }
+
+    return null;
+  }
+
+  /**
+   * Get current detection configuration summary
+   */
+  public getDetectionConfiguration(): any {
+    const systemConfig = configManager.getConfig();
+    return {
+      signals: {
+        volumeSpike: systemConfig.detection.signals.volumeSpike,
+        priceMovement: systemConfig.detection.signals.priceMovement,
+        crossMarketCorrelation: systemConfig.detection.signals.crossMarketCorrelation
+      },
+      statistical: systemConfig.detection.statistical,
+      alerts: systemConfig.detection.alerts,
+      workerThreads: {
+        enabled: true,
+        performanceStats: statisticalWorkerService.getPerformanceStats()
+      }
+    };
+  }
+
+  /**
+   * Shutdown worker threads when detector is destroyed
+   */
+  public async shutdown(): Promise<void> {
+    await statisticalWorkerService.shutdown();
   }
 }

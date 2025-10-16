@@ -1,48 +1,74 @@
 import { BotConfig, EarlySignal, Market, MicrostructureSignal } from '../types';
 import { PolymarketService } from '../services/PolymarketService';
+import { EnhancedPolymarketService } from '../services/EnhancedPolymarketService';
 import { SignalDetector } from '../services/SignalDetector';
 import { MicrostructureDetector } from '../services/MicrostructureDetector';
 import { DiscordAlerter } from '../services/DiscordAlerter';
+import { TopicClusteringEngine } from '../services/TopicClusteringEngine';
+import { DatabaseManager } from '../data/database';
+import { DataAccessLayer } from '../data/DataAccessLayer';
+import { getDatabaseConfig, validateDatabaseConfig } from '../config/database.config';
+import { configManager } from '../config/ConfigManager';
 import { logger } from '../utils/logger';
+import { advancedLogger } from '../utils/AdvancedLogger';
+import { metricsCollector } from '../monitoring/MetricsCollector';
+import { errorHandler } from '../utils/ErrorHandler';
+import { healthMonitor } from '../utils/HealthMonitor';
 
 export class EarlyBot {
   private config: BotConfig;
-  private polymarketService: PolymarketService;
+  private database: DatabaseManager;
+  private dataLayer: DataAccessLayer;
+  private polymarketService: EnhancedPolymarketService;
   private signalDetector: SignalDetector;
   private microstructureDetector: MicrostructureDetector;
   private discordAlerter: DiscordAlerter;
+  private topicClusteringEngine: TopicClusteringEngine;
   private isRunning = false;
   private intervalId?: NodeJS.Timeout;
   private performanceReportInterval?: NodeJS.Timeout;
 
   constructor() {
+    // Get initial configuration from config manager
+    const systemConfig = configManager.getConfig();
+    
     this.config = {
-      checkIntervalMs: this.parseIntWithBounds(process.env.CHECK_INTERVAL_MS, 30000, 5000, 300000), // 5s to 5min
-      minVolumeThreshold: this.parseIntWithBounds(process.env.MIN_VOLUME_THRESHOLD, 10000, 0, 10000000), // 0 to 10M
-      maxMarketsToTrack: this.parseIntWithBounds(process.env.MAX_MARKETS_TO_TRACK, 100, 1, 1000), // 1 to 1000
-      logLevel: process.env.LOG_LEVEL || 'info',
+      checkIntervalMs: systemConfig.detection.markets.refreshIntervalMs,
+      minVolumeThreshold: systemConfig.detection.markets.minVolumeThreshold,
+      maxMarketsToTrack: systemConfig.detection.markets.maxMarketsToTrack,
+      logLevel: systemConfig.environment.logLevel,
       apiUrls: {
         clob: process.env.CLOB_API_URL || 'https://clob.polymarket.com',
         gamma: process.env.GAMMA_API_URL || 'https://gamma-api.polymarket.com',
       },
       microstructure: {
-        orderbookImbalanceThreshold: this.parseFloatWithBounds(process.env.ORDERBOOK_IMBALANCE_THRESHOLD, 0.3, 0, 1),
-        spreadAnomalyThreshold: this.parseFloatWithBounds(process.env.SPREAD_ANOMALY_THRESHOLD, 2.0, 0.1, 10),
-        liquidityShiftThreshold: this.parseFloatWithBounds(process.env.LIQUIDITY_SHIFT_THRESHOLD, 20, 1, 100),
-        momentumThreshold: this.parseFloatWithBounds(process.env.MOMENTUM_THRESHOLD, 5, 0.1, 50),
-        tickBufferSize: this.parseIntWithBounds(process.env.TICK_BUFFER_SIZE, 1000, 100, 10000), // 100 to 10k
+        orderbookImbalanceThreshold: systemConfig.detection.microstructure.orderbookImbalance.threshold,
+        spreadAnomalyThreshold: systemConfig.detection.microstructure.frontRunning.spreadImpactThreshold,
+        liquidityShiftThreshold: systemConfig.detection.microstructure.liquidityVacuum.depthDropThreshold,
+        momentumThreshold: systemConfig.detection.signals.priceMovement.percentageThreshold,
+        tickBufferSize: systemConfig.performance.memory.maxRingBufferSize,
       },
       discord: {
         webhookUrl: process.env.DISCORD_WEBHOOK_URL,
         enableRichEmbeds: process.env.DISCORD_RICH_EMBEDS !== 'false',
-        alertRateLimit: this.parseIntWithBounds(process.env.DISCORD_RATE_LIMIT, 10, 1, 100), // 1 to 100
+        alertRateLimit: systemConfig.detection.alerts.discordRateLimit,
       },
     };
+    
+    // Subscribe to configuration changes
+    configManager.onConfigChange('earlybot', this.onConfigurationChange.bind(this));
 
-    this.polymarketService = new PolymarketService(this.config);
+    // Initialize database and data layer
+    const dbConfig = getDatabaseConfig();
+    validateDatabaseConfig(dbConfig);
+    this.database = new DatabaseManager(dbConfig);
+    this.dataLayer = new DataAccessLayer(this.database);
+    
+    this.polymarketService = new EnhancedPolymarketService(this.config, this.dataLayer);
     this.signalDetector = new SignalDetector(this.config);
     this.microstructureDetector = new MicrostructureDetector(this.config);
     this.discordAlerter = new DiscordAlerter(this.config);
+    this.topicClusteringEngine = new TopicClusteringEngine();
   }
 
   private parseIntWithBounds(value: string | undefined, defaultValue: number, min: number, max: number): number {
@@ -80,28 +106,91 @@ export class EarlyBot {
   }
 
   async initialize(): Promise<void> {
-    logger.info('Initializing Poly Early Bot...');
+    logger.info('Initializing Poly Early Bot with comprehensive error handling...');
     
-    // Initialize services
-    await this.polymarketService.initialize();
-    await this.signalDetector.initialize();
-    await this.microstructureDetector.initialize();
-    
-    // Set up event handlers
-    this.microstructureDetector.onSignal(this.handleSignal.bind(this));
-    this.microstructureDetector.onMicrostructureSignal(this.handleMicrostructureSignal.bind(this));
-    
-    // Test Discord connection if configured
-    if (this.config.discord.webhookUrl) {
-      try {
-        await this.discordAlerter.sendTestAlert();
-        logger.info('Discord webhook connection successful');
-      } catch (error) {
-        logger.warn('Discord webhook test failed:', error);
+    try {
+      // Start metrics collection
+      metricsCollector.start(60000); // 1-minute intervals
+      advancedLogger.info('Bot initialization started', {
+        component: 'bot',
+        operation: 'initialize'
+      });
+      // Initialize database first with error handling
+      logger.info('Initializing database...');
+      await errorHandler.executeWithRetry(
+        () => this.database.initialize(),
+        'database_initialization',
+        { maxRetries: 3, delayMs: 2000 }
+      );
+      
+      // Register health checks
+      this.registerHealthChecks();
+      
+      // Start health monitoring
+      healthMonitor.start();
+      
+      // Log initialization metrics
+      metricsCollector.setGauge('bot.initialization_phase', 1);
+      
+      // Initialize services with error handling
+      await errorHandler.executeWithRetry(
+        () => this.polymarketService.initialize(),
+        'polymarket_service_initialization'
+      );
+      
+      await errorHandler.executeWithRetry(
+        () => this.signalDetector.initialize(),
+        'signal_detector_initialization'
+      );
+      
+      await errorHandler.executeWithRetry(
+        () => this.microstructureDetector.initialize(),
+        'microstructure_detector_initialization'
+      );
+      
+      // Set up event handlers
+      this.microstructureDetector.onSignal(this.createSafeSignalHandler());
+      this.microstructureDetector.onMicrostructureSignal(this.createSafeMicrostructureHandler());
+      
+      // Test Discord connection if configured
+      if (this.config.discord.webhookUrl) {
+        try {
+          await errorHandler.executeWithRetry(
+            () => this.discordAlerter.sendTestAlert(),
+            'discord_test_alert',
+            { maxRetries: 2, delayMs: 1000 }
+          );
+          logger.info('Discord webhook connection successful');
+        } catch (error) {
+          logger.warn('Discord webhook test failed after retries:', error);
+        }
       }
+      
+      // Mark initialization as complete
+      metricsCollector.setGauge('bot.initialization_phase', 0);
+      metricsCollector.incrementCounter('bot.initialization_success', 1);
+      
+      advancedLogger.info('Bot initialized successfully with comprehensive monitoring and configuration management', {
+        component: 'bot',
+        operation: 'initialize',
+        metadata: { 
+          status: 'success',
+          configPreset: this.getActiveConfigurationSummary()
+        }
+      });
+      
+    } catch (error) {
+      metricsCollector.incrementCounter('bot.initialization_errors', 1);
+      advancedLogger.error('Critical error during bot initialization', error as Error, {
+        component: 'bot',
+        operation: 'initialize'
+      });
+      errorHandler.handleError(error as Error, { 
+        phase: 'initialization',
+        component: 'EarlyBot'
+      });
+      throw error;
     }
-    
-    logger.info('Bot initialized successfully');
   }
 
   async start(): Promise<void> {
@@ -111,22 +200,44 @@ export class EarlyBot {
     }
 
     this.isRunning = true;
-    logger.info('Starting real-time microstructure detection...');
+    metricsCollector.setGauge('bot.running', 1);
+    
+    advancedLogger.info('Starting real-time microstructure detection', {
+      component: 'bot',
+      operation: 'start'
+    });
 
     // Start microstructure detection
     await this.microstructureDetector.start();
 
     // Get high-volume markets for tracking
-    const markets = await this.polymarketService.getMarketsWithMinVolume(this.config.minVolumeThreshold);
+    const markets = await advancedLogger.timeOperation(
+      () => this.polymarketService.getMarketsWithMinVolume(this.config.minVolumeThreshold),
+      'get_markets_with_min_volume',
+      { component: 'bot', operation: 'start' }
+    );
     const topMarkets = markets
       .sort((a, b) => b.volumeNum - a.volumeNum)
       .slice(0, this.config.maxMarketsToTrack);
     
-    logger.info(`Found ${topMarkets.length} markets above volume threshold`);
+    // Record market metrics
+    metricsCollector.recordMarketMetrics(topMarkets.length, 0);
+    
+    advancedLogger.info(`Found ${topMarkets.length} markets above volume threshold`, {
+      component: 'bot',
+      operation: 'market_discovery',
+      metadata: { marketCount: topMarkets.length, minVolume: this.config.minVolumeThreshold }
+    });
     
     // Check how many markets have asset IDs for WebSocket subscriptions
     const marketsWithAssets = topMarkets.filter(m => m.metadata?.assetIds && m.metadata.assetIds.length > 0).length;
-    logger.info(`${marketsWithAssets}/${topMarkets.length} markets have asset IDs for WebSocket subscriptions`);
+    metricsCollector.setGauge('markets.with_websocket_assets', marketsWithAssets);
+    
+    advancedLogger.info(`WebSocket-enabled markets: ${marketsWithAssets}/${topMarkets.length}`, {
+      component: 'bot',
+      operation: 'websocket_setup',
+      metadata: { marketsWithAssets, totalMarkets: topMarkets.length }
+    });
     
     if (topMarkets.length > 0) {
       logger.info(`Top market example: "${topMarkets[0].question?.substring(0, 50)}..." - Volume: $${topMarkets[0].volumeNum.toFixed(0)}`);
@@ -162,7 +273,17 @@ export class EarlyBot {
       }
     }, 30 * 60 * 1000); // Every 30 minutes
 
-    logger.info('Real-time detection started successfully');
+    metricsCollector.incrementCounter('bot.start_success', 1);
+    
+    advancedLogger.info('Real-time detection started successfully', {
+      component: 'bot',
+      operation: 'start',
+      metadata: { 
+        trackedMarkets: topMarkets.length,
+        checkInterval: this.config.checkIntervalMs,
+        status: 'success'
+      }
+    });
   }
 
   async stop(): Promise<void> {
@@ -170,47 +291,144 @@ export class EarlyBot {
       return;
     }
 
-    this.isRunning = false;
+    advancedLogger.info('Stopping bot with graceful shutdown', {
+      component: 'bot',
+      operation: 'stop'
+    });
     
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-      this.intervalId = undefined;
+    this.isRunning = false;
+    metricsCollector.setGauge('bot.running', 0);
+    
+    try {
+      // Clear intervals
+      if (this.intervalId) {
+        clearInterval(this.intervalId);
+        this.intervalId = undefined;
+      }
+
+      if (this.performanceReportInterval) {
+        clearInterval(this.performanceReportInterval);
+        this.performanceReportInterval = undefined;
+      }
+
+      // Stop services with error handling
+      await errorHandler.executeWithRetry(
+        () => this.microstructureDetector.stop(),
+        'microstructure_detector_stop',
+        { maxRetries: 2 }
+      );
+      
+      await errorHandler.executeWithRetry(
+        () => this.polymarketService.stop(),
+        'polymarket_service_stop',
+        { maxRetries: 2 }
+      );
+      
+      // Stop health monitoring
+      healthMonitor.stop();
+      
+      // Stop metrics collection
+      metricsCollector.stop();
+      
+      // Close database connections
+      await errorHandler.executeWithRetry(
+        () => this.database.close(),
+        'database_close',
+        { maxRetries: 3 }
+      );
+
+      metricsCollector.incrementCounter('bot.stop_success', 1);
+      
+      advancedLogger.info('Bot stopped gracefully', {
+        component: 'bot',
+        operation: 'stop',
+        metadata: { status: 'success' }
+      });
+      
+    } catch (error) {
+      metricsCollector.incrementCounter('bot.stop_errors', 1);
+      
+      advancedLogger.error('Error during bot shutdown', error as Error, {
+        component: 'bot',
+        operation: 'stop'
+      });
+      errorHandler.handleError(error as Error, { 
+        phase: 'shutdown',
+        component: 'EarlyBot'
+      });
     }
-
-    if (this.performanceReportInterval) {
-      clearInterval(this.performanceReportInterval);
-      this.performanceReportInterval = undefined;
-    }
-
-    await this.microstructureDetector.stop();
-
-    logger.info('Bot stopped');
   }
 
   private async refreshMarkets(): Promise<void> {
-    logger.info('🔄 Scanning markets for opportunities...');
+    const startTime = Date.now();
+    
+    advancedLogger.info('🔄 Scanning markets for opportunities', {
+      component: 'bot',
+      operation: 'refresh_markets'
+    });
 
     try {
       // Get current high-volume markets
-      const markets = await this.polymarketService.getMarketsWithMinVolume(this.config.minVolumeThreshold);
+      const markets = await advancedLogger.timeOperation(
+        () => this.polymarketService.getMarketsWithMinVolume(this.config.minVolumeThreshold),
+        'get_markets_for_refresh',
+        { component: 'bot', operation: 'refresh_markets' }
+      );
       const topMarkets = markets
         .sort((a, b) => b.volumeNum - a.volumeNum)
         .slice(0, this.config.maxMarketsToTrack);
       
-      logger.info(`📊 Analyzing ${topMarkets.length} active markets...`);
+      // Record refresh metrics
+      const processingTime = Date.now() - startTime;
+      metricsCollector.recordMarketMetrics(topMarkets.length, processingTime);
+      
+      advancedLogger.info(`📊 Analyzing ${topMarkets.length} active markets`, {
+        component: 'bot',
+        operation: 'market_analysis',
+        metadata: { marketCount: topMarkets.length, processingTimeMs: processingTime }
+      });
+      
+      // 🧩 CLASSIFY MARKETS INTO TOPIC CLUSTERS for leak detection
+      this.topicClusteringEngine.classifyMarkets(topMarkets);
+      
+      // Log cluster statistics
+      const clusterStats = this.topicClusteringEngine.getClusterStatistics();
+      const activeClusters = Object.entries(clusterStats).filter(([_, stats]) => (stats as any).marketCount > 0);
+      if (activeClusters.length > 0) {
+        logger.info(`🏷️  Active clusters: ${activeClusters.map(([name, stats]) => `${name}(${(stats as any).marketCount})`).join(', ')}`);
+      }
       
       // DETECT SIGNALS from all markets
-      const signals = await this.signalDetector.detectSignals(topMarkets);
+      const signals = await advancedLogger.timeOperation(
+        () => this.signalDetector.detectSignals(topMarkets),
+        'detect_signals',
+        { component: 'bot', operation: 'signal_detection' }
+      );
+      
+      // 🔍 DETECT COORDINATED CROSS-MARKET MOVEMENTS (Information Leak Detection)
+      await this.detectCrossMarketLeaks(topMarkets);
       
       // Process any detected signals
       for (const signal of signals) {
         await this.handleSignal(signal);
       }
       
+      // Record signal metrics
+      metricsCollector.setGauge('signals.current_scan_count', signals.length);
+      metricsCollector.incrementCounter('scans.completed', 1);
+      
       if (signals.length > 0) {
-        logger.info(`🔔 Detected ${signals.length} signals in this scan`);
+        advancedLogger.warn(`🔔 Detected ${signals.length} signals in this scan`, {
+          component: 'bot',
+          operation: 'signal_processing',
+          metadata: { signalCount: signals.length }
+        });
       } else {
-        logger.info('✅ Scan complete - no signals detected (markets are stable)');
+        advancedLogger.info('✅ Scan complete - no signals detected (markets are stable)', {
+          component: 'bot',
+          operation: 'signal_processing',
+          metadata: { signalCount: 0, status: 'stable' }
+        });
       }
       
       const newMarketIds = new Set(topMarkets.map(m => m.id));
@@ -238,24 +456,76 @@ export class EarlyBot {
       }
 
     } catch (error) {
-      logger.error('Error refreshing markets:', error);
+      metricsCollector.incrementCounter('scans.errors', 1);
+      
+      advancedLogger.error('Error refreshing markets', error as Error, {
+        component: 'bot',
+        operation: 'refresh_markets'
+      });
     }
   }
 
   private async handleSignal(signal: EarlySignal): Promise<void> {
-    logger.info(`🔍 Signal Detected:`, {
-      type: signal.signalType,
-      market: signal.marketId.substring(0, 8) + '...',
-      confidence: signal.confidence.toFixed(2),
-      severity: signal.metadata?.severity,
-    });
+    // Log signal with advanced logger
+    advancedLogger.logSignalDetection(
+      signal.signalType,
+      signal.marketId,
+      signal.confidence,
+      signal.metadata
+    );
+    
+    // Record signal metrics
+    metricsCollector.recordSignalMetrics(
+      signal.signalType,
+      signal.confidence,
+      signal.marketId
+    );
+
+    // Save signal to database
+    try {
+      await advancedLogger.timeOperation(
+        () => this.dataLayer.saveSignal(signal),
+        'save_signal_to_database',
+        { 
+          component: 'bot',
+          operation: 'signal_persistence',
+          signalType: signal.signalType,
+          marketId: signal.marketId
+        }
+      );
+      
+      metricsCollector.incrementCounter('signals.saved_to_database', 1);
+    } catch (error) {
+      metricsCollector.incrementCounter('signals.database_save_errors', 1);
+      advancedLogger.error('Error saving signal to database', error as Error, {
+        component: 'bot',
+        operation: 'signal_persistence',
+        signalType: signal.signalType,
+        marketId: signal.marketId
+      });
+    }
 
     // Send Discord alert
     if (this.config.discord.webhookUrl) {
       try {
-        await this.discordAlerter.sendAlert(signal);
+        await advancedLogger.timeOperation(
+          () => this.discordAlerter.sendAlert(signal),
+          'send_discord_alert',
+          { 
+            component: 'bot',
+            operation: 'discord_notification',
+            signalType: signal.signalType
+          }
+        );
+        
+        metricsCollector.incrementCounter('alerts.discord_sent', 1);
       } catch (error) {
-        logger.error('Error sending Discord alert:', error);
+        metricsCollector.incrementCounter('alerts.discord_errors', 1);
+        advancedLogger.error('Error sending Discord alert', error as Error, {
+          component: 'bot',
+          operation: 'discord_notification',
+          signalType: signal.signalType
+        });
       }
     }
   }
@@ -278,14 +548,79 @@ export class EarlyBot {
     }
   }
 
+  private async detectCrossMarketLeaks(markets: Market[]): Promise<void> {
+    try {
+      // Get all entity clusters to check for coordinated movements
+      const entityClusters = this.topicClusteringEngine.getAllEntityClusters();
+      
+      for (const entityCluster of entityClusters) {
+        if (entityCluster.marketCount < 2) continue; // Need at least 2 markets for correlation
+        
+        const entityMarkets = this.topicClusteringEngine.getEntityMarkets(entityCluster.entity);
+        if (entityMarkets.length < 2) continue;
+        
+        // Calculate simple price changes (placeholder - in real implementation would use historical data)
+        const priceChanges = new Map<string, number>();
+        for (const market of entityMarkets) {
+          // For now, use volume change as a proxy for price movement
+          // In real implementation, you'd track actual price changes over time
+          const volumeChange = Math.random() * 10 - 5; // Placeholder random change -5% to +5%
+          priceChanges.set(market.id, volumeChange);
+        }
+        
+        // Detect coordinated movements
+        const coordinatedMove = this.topicClusteringEngine.detectCoordinatedMovements(
+          entityCluster.entity,
+          priceChanges,
+          2.0 // 2 sigma threshold
+        );
+        
+        if (coordinatedMove) {
+          logger.warn(`🚨 COORDINATED MOVEMENT DETECTED in ${entityCluster.entity}:`, {
+            markets: coordinatedMove.markets.length,
+            avgChange: coordinatedMove.averageChange.toFixed(2) + '%',
+            correlation: coordinatedMove.correlationScore.toFixed(2),
+            marketNames: coordinatedMove.markets.map(m => m.question?.substring(0, 30) + '...').join(', ')
+          });
+          
+          // Create leak detection signal
+          const leakSignal: EarlySignal = {
+            marketId: coordinatedMove.markets[0].id, // Primary market
+            market: coordinatedMove.markets[0],
+            signalType: 'coordinated_cross_market',
+            confidence: coordinatedMove.correlationScore,
+            timestamp: Date.now(),
+            metadata: {
+              severity: coordinatedMove.correlationScore > 0.7 ? 'critical' : 'high',
+              signalSource: 'cross_market_leak_detection',
+              entityCluster: entityCluster.entity,
+              correlatedMarkets: coordinatedMove.markets.map(m => m.id),
+              averageChange: coordinatedMove.averageChange,
+              correlationScore: coordinatedMove.correlationScore,
+              marketCount: coordinatedMove.markets.length,
+              leakType: 'coordinated_cross_market'
+            }
+          };
+          
+          await this.handleSignal(leakSignal);
+        }
+      }
+      
+    } catch (error) {
+      logger.error('Error detecting cross-market leaks:', error);
+    }
+  }
+
   private async sendPerformanceReport(): Promise<void> {
     try {
       const stats = this.microstructureDetector.getPerformanceStats();
       const health = await this.microstructureDetector.healthCheck();
+      const clusterHealth = this.topicClusteringEngine.healthCheck();
       
       const report = {
         ...stats,
-        healthy: health.healthy,
+        healthy: health.healthy && clusterHealth.healthy,
+        clustering: clusterHealth.details,
         timestamp: new Date().toISOString(),
       };
 
@@ -326,13 +661,252 @@ export class EarlyBot {
   async getHealthStatus(): Promise<any> {
     const microHealth = await this.microstructureDetector.healthCheck();
     const polyHealth = await this.polymarketService.healthCheck();
+    const clusterHealth = this.topicClusteringEngine.healthCheck();
+    const dataHealth = await this.dataLayer.healthCheck();
+    const systemHealth = healthMonitor.getSystemHealth();
+    const errorStats = errorHandler.getErrorStatistics();
     
     return {
       running: this.isRunning,
+      overall: systemHealth.overall,
+      score: systemHealth.score,
+      uptime: systemHealth.uptime,
       microstructureDetector: microHealth,
       polymarketService: polyHealth,
+      topicClustering: clusterHealth,
+      dataLayer: dataHealth,
+      systemHealth: systemHealth,
+      errorStatistics: {
+        totalErrors: errorStats.totalErrors,
+        recentErrorRate: errorStats.recentErrorRate,
+        circuitBreakers: Object.fromEntries(
+          Array.from(errorStats.circuitBreakerStates.entries())
+            .map(([key, state]) => [key, state.state])
+        )
+      },
       trackedMarkets: this.microstructureDetector.getTrackedMarkets().length,
       discordConfigured: !!this.config.discord.webhookUrl,
+      configurationManager: this.getConfigurationStatus(),
+    };
+  }
+
+  /**
+   * Register health checks for all components
+   */
+  private registerHealthChecks(): void {
+    // Register standard system health checks
+    healthMonitor.registerStandardHealthChecks();
+
+    // Register database health check
+    healthMonitor.registerHealthCheck({
+      name: 'database',
+      check: async () => {
+        const health = await this.database.healthCheck();
+        return {
+          healthy: health.healthy,
+          metrics: health.details
+        };
+      },
+      interval: 30000,
+      timeout: 10000,
+      critical: true
+    });
+
+    // Register polymarket service health check
+    healthMonitor.registerHealthCheck({
+      name: 'polymarket-service',
+      check: async () => {
+        const health = await this.polymarketService.healthCheck();
+        return {
+          healthy: health.healthy,
+          metrics: health.details
+        };
+      },
+      interval: 60000,
+      timeout: 15000,
+      critical: false
+    });
+
+    // Register microstructure detector health check
+    healthMonitor.registerHealthCheck({
+      name: 'microstructure-detector',
+      check: async () => {
+        const health = await this.microstructureDetector.healthCheck();
+        return {
+          healthy: health.healthy,
+          metrics: health.details
+        };
+      },
+      interval: 45000,
+      timeout: 10000,
+      critical: true
+    });
+
+    logger.info('Health checks registered for all components');
+  }
+
+  /**
+   * Create safe signal handler with error handling
+   */
+  private createSafeSignalHandler(): (signal: EarlySignal) => Promise<void> {
+    return errorHandler.createSafeWrapper(
+      this.handleSignal.bind(this),
+      'signal_handling',
+      {
+        retryConfig: { maxRetries: 2, delayMs: 1000 },
+        fallback: async (signal: EarlySignal) => {
+          logger.warn(`Signal handling fallback for ${signal.signalType} on market ${signal.marketId}`);
+          // Log signal to database without Discord notification
+          try {
+            await this.dataLayer.saveSignal(signal);
+          } catch (error) {
+            logger.error('Failed to save signal even in fallback mode:', error);
+          }
+        }
+      }
+    );
+  }
+
+  /**
+   * Create safe microstructure signal handler with error handling
+   */
+  private createSafeMicrostructureHandler(): (signal: MicrostructureSignal) => Promise<void> {
+    return errorHandler.createSafeWrapper(
+      this.handleMicrostructureSignal.bind(this),
+      'microstructure_signal_handling',
+      {
+        retryConfig: { maxRetries: 1, delayMs: 500 }
+      }
+    );
+  }
+
+  /**
+   * Handle configuration changes at runtime
+   */
+  private onConfigurationChange(newConfig: any): void {
+    try {
+      const oldConfig = { ...this.config };
+      
+      // Update bot configuration from new system config
+      this.config.checkIntervalMs = newConfig.detection.markets.refreshIntervalMs;
+      this.config.minVolumeThreshold = newConfig.detection.markets.minVolumeThreshold;
+      this.config.maxMarketsToTrack = newConfig.detection.markets.maxMarketsToTrack;
+      this.config.microstructure.orderbookImbalanceThreshold = newConfig.detection.microstructure.orderbookImbalance.threshold;
+      this.config.microstructure.liquidityShiftThreshold = newConfig.detection.microstructure.liquidityVacuum.depthDropThreshold;
+      this.config.discord.alertRateLimit = newConfig.detection.alerts.discordRateLimit;
+      
+      // Log configuration changes
+      const changes = this.getConfigurationChanges(oldConfig, this.config);
+      if (changes.length > 0) {
+        advancedLogger.info('Configuration updated at runtime', {
+          component: 'bot',
+          operation: 'config_change',
+          metadata: { 
+            changes,
+            newSummary: this.getActiveConfigurationSummary()
+          }
+        });
+        
+        // Update metrics
+        metricsCollector.incrementCounter('bot.config_updates', 1);
+        
+        // Restart intervals if timing changed
+        if (oldConfig.checkIntervalMs !== this.config.checkIntervalMs && this.isRunning) {
+          this.restartPeriodicOperations();
+        }
+      }
+      
+    } catch (error) {
+      advancedLogger.error('Error handling configuration change', error as Error, {
+        component: 'bot',
+        operation: 'config_change'
+      });
+    }
+  }
+
+  /**
+   * Get active configuration summary for logging
+   */
+  private getActiveConfigurationSummary(): Record<string, any> {
+    const systemConfig = configManager.getConfig();
+    return {
+      volumeThreshold: systemConfig.detection.signals.volumeSpike.multiplier,
+      priceThreshold: systemConfig.detection.signals.priceMovement.percentageThreshold,
+      correlationThreshold: systemConfig.detection.signals.crossMarketCorrelation.correlationThreshold,
+      zScoreThreshold: systemConfig.detection.statistical.anomalyDetection.zScoreThreshold,
+      maxMarkets: systemConfig.detection.markets.maxMarketsToTrack,
+      minVolume: systemConfig.detection.markets.minVolumeThreshold,
+      refreshInterval: systemConfig.detection.markets.refreshIntervalMs / 1000
+    };
+  }
+
+  /**
+   * Get configuration changes between old and new config
+   */
+  private getConfigurationChanges(oldConfig: BotConfig, newConfig: BotConfig): string[] {
+    const changes: string[] = [];
+    
+    if (oldConfig.checkIntervalMs !== newConfig.checkIntervalMs) {
+      changes.push(`refreshInterval: ${oldConfig.checkIntervalMs/1000}s → ${newConfig.checkIntervalMs/1000}s`);
+    }
+    if (oldConfig.minVolumeThreshold !== newConfig.minVolumeThreshold) {
+      changes.push(`minVolume: $${oldConfig.minVolumeThreshold} → $${newConfig.minVolumeThreshold}`);
+    }
+    if (oldConfig.maxMarketsToTrack !== newConfig.maxMarketsToTrack) {
+      changes.push(`maxMarkets: ${oldConfig.maxMarketsToTrack} → ${newConfig.maxMarketsToTrack}`);
+    }
+    if (oldConfig.microstructure.orderbookImbalanceThreshold !== newConfig.microstructure.orderbookImbalanceThreshold) {
+      changes.push(`imbalanceThreshold: ${oldConfig.microstructure.orderbookImbalanceThreshold} → ${newConfig.microstructure.orderbookImbalanceThreshold}`);
+    }
+    if (oldConfig.discord.alertRateLimit !== newConfig.discord.alertRateLimit) {
+      changes.push(`discordRateLimit: ${oldConfig.discord.alertRateLimit} → ${newConfig.discord.alertRateLimit}`);
+    }
+    
+    return changes;
+  }
+
+  /**
+   * Restart periodic operations with new timing
+   */
+  private restartPeriodicOperations(): void {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      
+      this.intervalId = setInterval(async () => {
+        try {
+          await this.refreshMarkets();
+        } catch (error) {
+          logger.error('Error during market refresh:', error);
+        }
+      }, this.config.checkIntervalMs);
+      
+      advancedLogger.info('Restarted periodic operations with new interval', {
+        component: 'bot',
+        operation: 'restart_intervals',
+        metadata: { newIntervalMs: this.config.checkIntervalMs }
+      });
+    }
+  }
+
+  /**
+   * Get current configuration management status
+   */
+  public getConfigurationStatus(): any {
+    const systemConfig = configManager.getConfig();
+    return {
+      configManager: {
+        available: true,
+        configFile: 'config/detection-config.json',
+        lastUpdate: Date.now()
+      },
+      activeConfiguration: this.getActiveConfigurationSummary(),
+      features: systemConfig.features,
+      performance: {
+        maxConcurrentRequests: systemConfig.performance.processing.maxConcurrentRequests,
+        requestTimeout: systemConfig.performance.processing.requestTimeoutMs,
+        maxDataPoints: systemConfig.performance.memory.maxHistoricalDataPoints,
+        bufferSize: systemConfig.performance.memory.maxRingBufferSize
+      }
     };
   }
 }

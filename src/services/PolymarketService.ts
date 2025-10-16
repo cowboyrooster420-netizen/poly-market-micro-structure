@@ -1,5 +1,7 @@
 import { BotConfig, Market, OrderbookData, OrderbookLevel, TickData } from '../types';
 import { logger } from '../utils/logger';
+import { advancedLogger } from '../utils/AdvancedLogger';
+import { metricsCollector } from '../monitoring/MetricsCollector';
 import { polymarketRateLimiter } from '../utils/RateLimiter';
 
 // Helper function to add timeout to fetch requests
@@ -35,15 +37,21 @@ export class PolymarketService {
   }
 
   async getActiveMarkets(): Promise<Market[]> {
+    const startTime = Date.now();
+    
     try {
       // Use Gamma API for active markets with rate limiting
-      const response = await polymarketRateLimiter.execute(async () => {
-        return fetchWithTimeout(
-          `${this.config.apiUrls.gamma}/markets?active=true&closed=false&limit=1000`,
-          {},
-          15000
-        );
-      });
+      const response = await advancedLogger.timeOperation(
+        () => polymarketRateLimiter.execute(async () => {
+          return fetchWithTimeout(
+            `${this.config.apiUrls.gamma}/markets?active=true&closed=false&limit=1000`,
+            {},
+            15000
+          );
+        }),
+        'polymarket_get_active_markets',
+        { component: 'polymarket_service', operation: 'get_active_markets' }
+      );
 
       if (!response.ok) {
         throw new Error(`API request failed: ${response.status}`);
@@ -53,10 +61,29 @@ export class PolymarketService {
       
       // Gamma API returns array directly, already filtered for active/open markets
       const marketsList = Array.isArray(markets) ? markets : [];
+      const transformedMarkets = this.transformMarkets(marketsList);
       
-      return this.transformMarkets(marketsList);
+      // Record metrics
+      const duration = Date.now() - startTime;
+      metricsCollector.recordDatabaseMetrics('get_active_markets', duration, true);
+      metricsCollector.setGauge('polymarket.active_markets_count', transformedMarkets.length);
+      
+      advancedLogger.info(`Fetched ${transformedMarkets.length} active markets`, {
+        component: 'polymarket_service',
+        operation: 'get_active_markets',
+        metadata: { marketCount: transformedMarkets.length, durationMs: duration }
+      });
+      
+      return transformedMarkets;
     } catch (error) {
-      logger.error('Error fetching active markets:', error);
+      const duration = Date.now() - startTime;
+      metricsCollector.recordDatabaseMetrics('get_active_markets', duration, false);
+      
+      advancedLogger.error('Error fetching active markets', error as Error, {
+        component: 'polymarket_service',
+        operation: 'get_active_markets'
+      });
+      
       throw error;
     }
   }
@@ -92,8 +119,41 @@ export class PolymarketService {
 
   private transformMarket(data: any): Market | null {
     try {
-      // Extract asset IDs for WebSocket subscriptions
-      const assetIds = data.tokens ? data.tokens.map((t: any) => t.token_id).filter(Boolean) : [];
+      // Debug log the raw market data to understand structure
+      if (process.env.LOG_LEVEL === 'debug') {
+        logger.debug('Raw market data sample:', {
+          keys: Object.keys(data),
+          hasTokens: !!data.tokens,
+          tokensLength: data.tokens?.length || 0,
+          tokensSample: data.tokens?.[0] ? Object.keys(data.tokens[0]) : [],
+        });
+      }
+      
+      // Extract asset IDs from multiple possible formats
+      let assetIds: string[] = [];
+      
+      // Format 1: tokens array with token_id
+      if (data.tokens && Array.isArray(data.tokens)) {
+        assetIds = data.tokens
+          .map((t: any) => t.token_id || t.id || t.asset_id)
+          .filter(Boolean);
+      }
+      
+      // Format 2: direct asset_id field
+      if (!assetIds.length && data.asset_id) {
+        assetIds = [data.asset_id];
+      }
+      
+      // Format 3: outcome_tokens array
+      if (!assetIds.length && data.outcome_tokens) {
+        assetIds = data.outcome_tokens.filter(Boolean);
+      }
+      
+      // Format 4: Use condition_id as fallback for WebSocket
+      if (!assetIds.length && data.condition_id) {
+        assetIds = [data.condition_id];
+        logger.debug(`Using condition_id as asset fallback for market: ${data.condition_id}`);
+      }
       
       return {
         id: data.condition_id || data.id,
@@ -113,6 +173,7 @@ export class PolymarketService {
         metadata: {
           assetIds: assetIds,
           conditionId: data.condition_id,
+          rawTokensData: process.env.LOG_LEVEL === 'debug' ? data.tokens : undefined,
         }
       };
     } catch (error) {
@@ -148,10 +209,20 @@ export class PolymarketService {
 
   // Enhanced methods for microstructure analysis
   async getOrderbook(marketId: string): Promise<OrderbookData | null> {
+    const startTime = Date.now();
+    
     try {
-      const response = await polymarketRateLimiter.execute(async () => {
-        return fetchWithTimeout(`${this.config.apiUrls.clob}/book?token_id=${marketId}`, {}, 10000);
-      });
+      const response = await advancedLogger.timeOperation(
+        () => polymarketRateLimiter.execute(async () => {
+          return fetchWithTimeout(`${this.config.apiUrls.clob}/book?token_id=${marketId}`, {}, 10000);
+        }),
+        'polymarket_get_orderbook',
+        { 
+          component: 'polymarket_service',
+          operation: 'get_orderbook',
+          marketId: marketId.substring(0, 8) + '...'
+        }
+      );
       
       if (!response.ok) {
         if (response.status === 404) {
@@ -161,9 +232,23 @@ export class PolymarketService {
       }
 
       const data = await response.json();
-      return this.transformOrderbook(data, marketId);
+      const orderbook = this.transformOrderbook(data, marketId);
+      
+      // Record metrics
+      const duration = Date.now() - startTime;
+      metricsCollector.recordDatabaseMetrics('get_orderbook', duration, true);
+      
+      return orderbook;
     } catch (error) {
-      logger.error(`Error fetching orderbook for ${marketId}:`, error);
+      const duration = Date.now() - startTime;
+      metricsCollector.recordDatabaseMetrics('get_orderbook', duration, false);
+      
+      advancedLogger.error(`Error fetching orderbook for market`, error as Error, {
+        component: 'polymarket_service',
+        operation: 'get_orderbook',
+        marketId: marketId.substring(0, 8) + '...'
+      });
+      
       return null;
     }
   }
@@ -295,23 +380,54 @@ export class PolymarketService {
 
 
   // Health check method
-  async healthCheck(): Promise<{ healthy: boolean; latency: number }> {
+  async healthCheck(): Promise<{ healthy: boolean; latency: number; details?: any }> {
     const start = Date.now();
     
     try {
       const response = await polymarketRateLimiter.execute(async () => {
-        return fetchWithTimeout(`${this.config.apiUrls.clob}/markets`, {}, 10000);
+        return fetchWithTimeout(`${this.config.apiUrls.gamma}/markets?limit=1`, {}, 10000);
       });
       const latency = Date.now() - start;
+      const healthy = response.ok;
+      
+      // Record health check metrics
+      metricsCollector.recordHistogram('polymarket.health_check_latency', latency);
+      metricsCollector.setGauge('polymarket.healthy', healthy ? 1 : 0);
+      
+      if (!healthy) {
+        advancedLogger.warn('Polymarket health check failed', {
+          component: 'polymarket_service',
+          operation: 'health_check',
+          metadata: { status: response.status, latency }
+        });
+      }
       
       return {
-        healthy: response.ok,
+        healthy,
         latency,
+        details: {
+          status: response.status,
+          endpoint: 'gamma/markets'
+        }
       };
     } catch (error) {
+      const latency = Date.now() - start;
+      
+      metricsCollector.recordHistogram('polymarket.health_check_latency', latency);
+      metricsCollector.setGauge('polymarket.healthy', 0);
+      
+      advancedLogger.error('Polymarket health check error', error as Error, {
+        component: 'polymarket_service',
+        operation: 'health_check',
+        metadata: { latency }
+      });
+      
       return {
         healthy: false,
-        latency: Date.now() - start,
+        latency,
+        details: {
+          error: (error as Error).message
+        }
       };
     }
   }

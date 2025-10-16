@@ -22,7 +22,7 @@ export interface Market {
 export interface EarlySignal {
   marketId: string;
   market: Market;
-  signalType: 'new_market' | 'volume_spike' | 'price_movement' | 'unusual_activity' | 'orderbook_imbalance' | 'spread_anomaly' | 'market_maker_withdrawal' | 'momentum_breakout' | 'liquidity_shift' | 'aggressive_buyer' | 'aggressive_seller' | 'iceberg_detected' | 'wall_break' | 'liquidity_vacuum' | 'smart_money' | 'stop_hunt';
+  signalType: 'new_market' | 'volume_spike' | 'price_movement' | 'unusual_activity' | 'orderbook_imbalance' | 'spread_anomaly' | 'market_maker_withdrawal' | 'momentum_breakout' | 'liquidity_shift' | 'aggressive_buyer' | 'aggressive_seller' | 'iceberg_detected' | 'wall_break' | 'liquidity_vacuum' | 'smart_money' | 'stop_hunt' | 'information_leak' | 'coordinated_cross_market' | 'off_hours_anomaly' | 'stealth_accumulation' | 'micro_price_drift' | 'bullish_momentum' | 'bearish_momentum' | 'front_running_detected';
   confidence: number;
   timestamp: number;
   metadata?: Record<string, any>;
@@ -127,7 +127,7 @@ export interface MicrostructureSignal {
 }
 
 export interface AlertMessage {
-  type: 'urgent' | 'price_action' | 'liquidity' | 'new_opportunity' | 'flash_move' | 'order_flow';
+  type: 'urgent' | 'price_action' | 'liquidity' | 'new_opportunity' | 'flash_move' | 'order_flow' | 'information_leak';
   title: string;
   description: string;
   color: number;
@@ -138,4 +138,101 @@ export interface AlertMessage {
   }>;
   footer?: string;
   timestamp: number;
+}
+
+// New interfaces for information leakage detection
+export interface EnhancedMicrostructureMetrics {
+  marketId: string;
+  timestamp: number;
+  
+  // Depth metrics
+  depth1Bid: number;
+  depth1Ask: number;
+  depth1Total: number;
+  depth1Change: number;
+  depth1Baseline: number;
+  
+  // Micro-price calculation
+  microPrice: number;
+  microPriceSlope: number;
+  microPriceDrift: number;
+  
+  // Advanced orderbook metrics
+  orderBookImbalance: number;
+  spreadBps: number;
+  spreadChange: number;
+  liquidityVacuum: boolean;
+  
+  // Z-scores for anomaly detection
+  volumeZScore: number;
+  depthZScore: number;
+  spreadZScore: number;
+  imbalanceZScore: number;
+  
+  // Time-based baselines
+  timeOfDayBaseline: {
+    volume: number;
+    depth: number;
+    spread: number;
+    imbalance: number;
+  };
+}
+
+export interface LeakDetectionSignal {
+  type: 'liquidity_vacuum' | 'coordinated_cross_market' | 'off_hours_anomaly' | 'stealth_accumulation' | 'micro_price_drift';
+  marketId: string;
+  timestamp: number;
+  confidence: number;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  
+  // Leak-specific metadata
+  leakMetadata: {
+    topicCluster?: string;
+    correlatedMarkets?: string[];
+    timeToNews?: number; // Predicted time until news breaks (in minutes)
+    frontRunScore?: number; // Heuristic score for front-running probability
+    crossMarketConfirmation?: boolean;
+    offHoursFlag?: boolean;
+    liquidityDrop?: number;
+    microPriceDrift?: number;
+  };
+  
+  data: {
+    current: number;
+    baseline: number;
+    change: number;
+    zScore: number;
+    context?: Record<string, any>;
+  };
+}
+
+export interface CrossMarketCorrelation {
+  market1Id: string;
+  market2Id: string;
+  correlation: number;
+  timeWindow: number;
+  significance: number;
+  lastUpdated: number;
+}
+
+export interface AnomalyScore {
+  marketId: string;
+  timestamp: number;
+  
+  // Individual feature scores
+  volumeAnomaly: number;
+  depthAnomaly: number;
+  spreadAnomaly: number;
+  imbalanceAnomaly: number;
+  priceAnomaly: number;
+  
+  // Combined anomaly scores
+  mahalanobisDistance: number;
+  isolationForestScore: number;
+  combinedScore: number;
+  
+  // Classification
+  isAnomalous: boolean;
+  anomalyType: string[];
+  confidence: number;
 }

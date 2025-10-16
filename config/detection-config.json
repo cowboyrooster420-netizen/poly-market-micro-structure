@@ -1,0 +1,122 @@
+{
+  "detection": {
+    "signals": {
+      "volumeSpike": {
+        "multiplier": 3,
+        "windowMs": 600000,
+        "minConfidence": 0.75
+      },
+      "priceMovement": {
+        "percentageThreshold": 10,
+        "timeWindowMs": 1200000,
+        "minVolume": 25000
+      },
+      "crossMarketCorrelation": {
+        "correlationThreshold": 0.7,
+        "minMarkets": 2,
+        "zScoreThreshold": 2.5
+      }
+    },
+    "microstructure": {
+      "orderbookImbalance": {
+        "threshold": 0.3,
+        "depth": 10,
+        "minSpreadBps": 15
+      },
+      "liquidityVacuum": {
+        "depthDropThreshold": 30,
+        "spreadWidenThreshold": 2.5,
+        "durationMs": 180000
+      },
+      "frontRunning": {
+        "scoreThreshold": 0.7,
+        "volumeWeightThreshold": 0.6,
+        "spreadImpactThreshold": 2
+      }
+    },
+    "statistical": {
+      "anomalyDetection": {
+        "zScoreThreshold": 2.5,
+        "mahalanobisThreshold": 3,
+        "isolationForestThreshold": 0.7,
+        "lookbackPeriods": 120
+      },
+      "trendAnalysis": {
+        "trendStrengthThreshold": 0.6,
+        "volatilityThreshold": 0.4,
+        "stabilityPeriods": 24
+      }
+    },
+    "markets": {
+      "minVolumeThreshold": 20000,
+      "maxMarketsToTrack": 100,
+      "refreshIntervalMs": 30000,
+      "inactivityTimeoutMs": 3600000
+    },
+    "alerts": {
+      "discordRateLimit": 10,
+      "confidenceThresholds": {
+        "info": 0.6,
+        "warning": 0.75,
+        "critical": 0.9
+      },
+      "severityLevels": {
+        "low": [
+          "volume_spike",
+          "price_movement"
+        ],
+        "medium": [
+          "orderbook_imbalance",
+          "liquidity_vacuum"
+        ],
+        "high": [
+          "front_running",
+          "cross_market_correlation"
+        ],
+        "critical": [
+          "coordinated_cross_market",
+          "statistical_anomaly"
+        ]
+      }
+    }
+  },
+  "performance": {
+    "processing": {
+      "maxConcurrentRequests": 10,
+      "requestTimeoutMs": 15000,
+      "retryAttempts": 3,
+      "backoffMultiplier": 2
+    },
+    "memory": {
+      "maxHistoricalDataPoints": 10000,
+      "cleanupIntervalMs": 300000,
+      "maxRingBufferSize": 1000,
+      "gcThresholdMb": 512
+    },
+    "database": {
+      "connectionPoolSize": 5,
+      "queryTimeoutMs": 30000,
+      "batchSize": 100,
+      "vacuumIntervalMs": 86400000
+    },
+    "websocket": {
+      "maxConnections": 50,
+      "heartbeatIntervalMs": 30000,
+      "reconnectDelayMs": 5000,
+      "messageQueueSize": 1000
+    }
+  },
+  "environment": {
+    "logLevel": "info",
+    "isDevelopment": false,
+    "enableDebugMode": false,
+    "enablePerformanceMode": true
+  },
+  "features": {
+    "enableCrossMarketDetection": true,
+    "enableMicrostructureAnalysis": true,
+    "enableStatisticalModels": true,
+    "enableBacktesting": false,
+    "enableWebDashboard": true
+  }
+}

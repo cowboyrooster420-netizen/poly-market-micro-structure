@@ -6,13 +6,16 @@ import {
   Market,
   MicrostructureSignal,
   TechnicalIndicators,
-  OrderbookMetrics 
+  OrderbookMetrics,
+  EnhancedMicrostructureMetrics 
 } from '../types';
 import { SignalDetector } from './SignalDetector';
 import { OrderbookAnalyzer } from './OrderbookAnalyzer';
 import { TechnicalIndicatorCalculator } from './TechnicalIndicators';
 import { WebSocketService } from './WebSocketService';
 import { OrderFlowAnalyzer } from './OrderFlowAnalyzer';
+import { EnhancedMicrostructureAnalyzer } from './EnhancedMicrostructureAnalyzer';
+import { FrontRunningHeuristicEngine } from './FrontRunningHeuristicEngine';
 import { logger } from '../utils/logger';
 
 export class MicrostructureDetector {
@@ -21,6 +24,8 @@ export class MicrostructureDetector {
   private orderbookAnalyzer: OrderbookAnalyzer;
   private technicalIndicators: TechnicalIndicatorCalculator;
   private orderFlowAnalyzer: OrderFlowAnalyzer;
+  private enhancedAnalyzer: EnhancedMicrostructureAnalyzer;
+  private frontRunEngine: FrontRunningHeuristicEngine;
   private webSocketService: WebSocketService;
   private isRunning = false;
   private trackedMarkets: Set<string> = new Set();
@@ -40,6 +45,8 @@ export class MicrostructureDetector {
     this.orderbookAnalyzer = new OrderbookAnalyzer(config);
     this.technicalIndicators = new TechnicalIndicatorCalculator(config);
     this.orderFlowAnalyzer = new OrderFlowAnalyzer(config);
+    this.enhancedAnalyzer = new EnhancedMicrostructureAnalyzer(config);
+    this.frontRunEngine = new FrontRunningHeuristicEngine(config);
     this.webSocketService = new WebSocketService(config);
   }
 
@@ -96,6 +103,8 @@ export class MicrostructureDetector {
     this.technicalIndicators.dispose();
     this.orderbookAnalyzer.dispose();
     this.orderFlowAnalyzer.dispose();
+    this.enhancedAnalyzer.cleanupStaleMarkets();
+    this.frontRunEngine.cleanup();
     
     logger.info('MicrostructureDetector stopped');
   }
@@ -152,6 +161,18 @@ export class MicrostructureDetector {
     return this.orderbookAnalyzer.getMarketMetrics(marketId);
   }
 
+  getEnhancedMarketMetrics(marketId: string): EnhancedMicrostructureMetrics | null {
+    return this.enhancedAnalyzer.getMarketMetrics(marketId);
+  }
+
+  getFrontRunningScore(marketId: string): any | null {
+    return this.frontRunEngine.getMarketScore(marketId);
+  }
+
+  getTopFrontRunningMarkets(limit: number = 10): any[] {
+    return this.frontRunEngine.getTopScoringMarkets(limit);
+  }
+
   getTrackedMarkets(): string[] {
     return Array.from(this.trackedMarkets);
   }
@@ -192,6 +213,17 @@ export class MicrostructureDetector {
     if (!this.isRunning || !this.trackedMarkets.has(orderbook.marketId)) return;
 
     try {
+      // 🔥 ENHANCED: Process with advanced microstructure analyzer
+      const enhancedMetrics = this.enhancedAnalyzer.processOrderbook(orderbook);
+      
+      if (enhancedMetrics) {
+        // Detect information leakage patterns
+        await this.detectLeakagePatterns(enhancedMetrics, orderbook);
+        
+        // 🎯 FRONT-RUNNING HEURISTIC ANALYSIS
+        await this.analyzeFrontRunningSignals(enhancedMetrics, orderbook);
+      }
+
       // Detect orderbook-based signals
       const signals = this.signalDetector.detectOrderbookSignals(orderbook);
       
@@ -212,7 +244,8 @@ export class MicrostructureDetector {
       }
 
       // Update performance counters
-      this.updateSignalCounts('orderbook', signals.length + microSignals.length + flowSignals.length);
+      const totalSignals = signals.length + microSignals.length + flowSignals.length;
+      this.updateSignalCounts('orderbook', totalSignals);
 
     } catch (error) {
       logger.error('Error processing orderbook data:', error);
@@ -263,6 +296,180 @@ export class MicrostructureDetector {
     // Call handler if set
     if (this.onMicrostructureSignalHandler) {
       this.onMicrostructureSignalHandler(signal);
+    }
+  }
+
+  private async detectLeakagePatterns(metrics: EnhancedMicrostructureMetrics, orderbook: OrderbookData): Promise<void> {
+    const marketId = metrics.marketId;
+    
+    try {
+      // 1. LIQUIDITY VACUUM DETECTION
+      if (metrics.liquidityVacuum) {
+        logger.warn(`🌪️  LIQUIDITY VACUUM detected in ${marketId.substring(0, 8)}...`, {
+          depthDrop: metrics.depth1Change.toFixed(1) + '%',
+          spreadStable: metrics.spreadChange.toFixed(1) + '%',
+          zScore: metrics.depthZScore.toFixed(2)
+        });
+        
+        const vacuumSignal: EarlySignal = {
+          marketId,
+          market: {} as Market,
+          signalType: 'liquidity_vacuum',
+          confidence: Math.min(0.95, Math.abs(metrics.depth1Change) / 40),
+          timestamp: metrics.timestamp,
+          metadata: {
+            severity: Math.abs(metrics.depth1Change) > 60 ? 'critical' : 'high',
+            signalSource: 'enhanced_microstructure',
+            depthDrop: metrics.depth1Change,
+            spreadChange: metrics.spreadChange,
+            zScore: metrics.depthZScore,
+            leakType: 'liquidity_vacuum'
+          }
+        };
+        
+        this.processSignal(vacuumSignal);
+      }
+      
+      // 2. STEALTH ACCUMULATION DETECTION (OBI surge with stable spread)
+      if (metrics.imbalanceZScore > 3 && Math.abs(metrics.spreadChange) < 10) {
+        logger.warn(`🕵️  STEALTH ACCUMULATION detected in ${marketId.substring(0, 8)}...`, {
+          imbalanceZScore: metrics.imbalanceZScore.toFixed(2),
+          spreadChange: metrics.spreadChange.toFixed(1) + '%',
+          imbalance: metrics.orderBookImbalance.toFixed(3)
+        });
+        
+        const stealthSignal: EarlySignal = {
+          marketId,
+          market: {} as Market,
+          signalType: 'stealth_accumulation',
+          confidence: Math.min(0.9, metrics.imbalanceZScore / 5),
+          timestamp: metrics.timestamp,
+          metadata: {
+            severity: metrics.imbalanceZScore > 5 ? 'critical' : 'high',
+            signalSource: 'enhanced_microstructure',
+            imbalanceZScore: metrics.imbalanceZScore,
+            orderBookImbalance: metrics.orderBookImbalance,
+            spreadStability: metrics.spreadChange,
+            leakType: 'stealth_accumulation'
+          }
+        };
+        
+        this.processSignal(stealthSignal);
+      }
+      
+      // 3. MICRO-PRICE DRIFT DETECTION
+      if (metrics.microPriceDrift > 0) {
+        logger.info(`📈 MICRO-PRICE DRIFT detected in ${marketId.substring(0, 8)}...`, {
+          drift: metrics.microPriceDrift.toFixed(6),
+          slope: metrics.microPriceSlope.toFixed(6),
+          microPrice: metrics.microPrice.toFixed(4)
+        });
+        
+        const driftSignal: EarlySignal = {
+          marketId,
+          market: {} as Market,
+          signalType: 'micro_price_drift',
+          confidence: Math.min(0.8, metrics.microPriceDrift * 1000), // Scale up small drift values
+          timestamp: metrics.timestamp,
+          metadata: {
+            severity: metrics.microPriceDrift > 0.001 ? 'high' : 'medium',
+            signalSource: 'enhanced_microstructure',
+            microPriceDrift: metrics.microPriceDrift,
+            microPriceSlope: metrics.microPriceSlope,
+            microPrice: metrics.microPrice,
+            leakType: 'micro_price_drift'
+          }
+        };
+        
+        this.processSignal(driftSignal);
+      }
+      
+      // 4. OFF-HOURS ANOMALY DETECTION
+      const now = new Date(metrics.timestamp);
+      const hour = now.getHours();
+      const isOffHours = hour < 6 || hour > 22; // 10 PM - 6 AM EST
+      
+      if (isOffHours && (metrics.volumeZScore > 3 || metrics.depthZScore > 3)) {
+        logger.warn(`🌙 OFF-HOURS ANOMALY detected in ${marketId.substring(0, 8)}...`, {
+          hour: hour,
+          volumeZ: metrics.volumeZScore.toFixed(2),
+          depthZ: metrics.depthZScore.toFixed(2)
+        });
+        
+        const offHoursSignal: EarlySignal = {
+          marketId,
+          market: {} as Market,
+          signalType: 'off_hours_anomaly',
+          confidence: Math.min(0.9, Math.max(metrics.volumeZScore, metrics.depthZScore) / 5),
+          timestamp: metrics.timestamp,
+          metadata: {
+            severity: Math.max(metrics.volumeZScore, metrics.depthZScore) > 5 ? 'critical' : 'high',
+            signalSource: 'enhanced_microstructure',
+            hour: hour,
+            volumeZScore: metrics.volumeZScore,
+            depthZScore: metrics.depthZScore,
+            offHoursFlag: true,
+            leakType: 'off_hours_anomaly'
+          }
+        };
+        
+        this.processSignal(offHoursSignal);
+      }
+      
+    } catch (error) {
+      logger.error('Error detecting leakage patterns:', error);
+    }
+  }
+
+  private async analyzeFrontRunningSignals(metrics: EnhancedMicrostructureMetrics, orderbook: OrderbookData): Promise<void> {
+    try {
+      // Create a minimal market object for heuristic analysis
+      // In a real implementation, you'd get the full market data
+      const mockMarket: Market = {
+        id: metrics.marketId,
+        question: `Market ${metrics.marketId.substring(0, 8)}...`,
+        description: '',
+        outcomes: ['Yes', 'No'],
+        outcomePrices: [orderbook.midPrice.toString(), (1 - orderbook.midPrice).toString()],
+        volume: '0', // We don't have volume in orderbook data
+        volumeNum: 10000, // Placeholder volume
+        active: true,
+        closed: false,
+        tags: [],
+        metadata: {}
+      };
+      
+      // Calculate front-running score
+      const frontRunScore = this.frontRunEngine.calculateFrontRunScore(
+        metrics,
+        mockMarket,
+        [], // No correlated markets for now - would need integration with TopicClusteringEngine
+        'unknown' // No topic cluster for now
+      );
+      
+      // Create leak signal if score is significant
+      const leakSignal = this.frontRunEngine.createLeakSignal(
+        frontRunScore,
+        mockMarket,
+        []
+      );
+      
+      if (leakSignal) {
+        // Process the high-confidence front-running signal
+        this.processSignal(leakSignal);
+        
+        logger.warn(`🎯 FRONT-RUNNING LEAK DETECTED in ${metrics.marketId.substring(0, 8)}...`, {
+          score: frontRunScore.score.toFixed(3),
+          confidence: frontRunScore.confidence.toFixed(3),
+          leakProbability: (frontRunScore.leakProbability * 100).toFixed(1) + '%',
+          timeToNews: frontRunScore.timeToNews.toFixed(1) + ' min',
+          microPriceDrift: frontRunScore.metadata.microPriceDelta.toFixed(6),
+          liquidityDrop: frontRunScore.metadata.liquidityDrop.toFixed(1) + '%'
+        });
+      }
+      
+    } catch (error) {
+      logger.error('Error analyzing front-running signals:', error);
     }
   }
 
@@ -349,6 +556,8 @@ export class MicrostructureDetector {
         try {
           this.technicalIndicators.cleanupStaleMarkets();
           this.orderbookAnalyzer.cleanupStaleMarkets();
+          this.enhancedAnalyzer.cleanupStaleMarkets();
+          this.frontRunEngine.cleanup();
         } catch (cleanupError) {
           logger.error('Error during market data cleanup:', cleanupError);
         }
@@ -362,14 +571,18 @@ export class MicrostructureDetector {
   async healthCheck(): Promise<{ healthy: boolean; details: any }> {
     const stats = this.getPerformanceStats();
     const connected = this.webSocketService.isWebSocketConnected();
+    const enhancedHealth = this.enhancedAnalyzer.healthCheck();
+    const frontRunHealth = this.frontRunEngine.healthCheck();
     
     return {
-      healthy: this.isRunning && connected && this.trackedMarkets.size > 0,
+      healthy: this.isRunning && connected && this.trackedMarkets.size > 0 && enhancedHealth.healthy && frontRunHealth.healthy,
       details: {
         running: this.isRunning,
         webSocketConnected: connected,
         marketsTracked: this.trackedMarkets.size,
         totalSignals: stats.totalSignals,
+        enhancedAnalyzer: enhancedHealth.details,
+        frontRunningEngine: frontRunHealth.details,
         lastUpdate: new Date().toISOString(),
       },
     };
