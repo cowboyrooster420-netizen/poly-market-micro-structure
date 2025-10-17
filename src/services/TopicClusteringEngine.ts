@@ -25,19 +25,19 @@ export class TopicClusteringEngine {
   // Predefined entity patterns for political/financial markets
   private readonly entityPatterns = {
     'trump': [
-      'trump', 'donald trump', 'president trump', 'trump 2024', 'trump conviction', 
-      'truth social', 'mar-a-lago', 'stormy daniels', 'manhattan da', 'georgia case'
+      'trump', 'donald trump', 'president trump', 'trump administration', 'trump cabinet',
+      'trump executive order', 'truth social', 'mar-a-lago', 'trump policy', 'trump tariff'
     ],
     'biden': [
-      'biden', 'joe biden', 'president biden', 'hunter biden', 'biden administration',
-      'brandon', 'dark brandon', 'biden approval'
+      'biden', 'joe biden', 'former president biden', 'hunter biden',
+      'biden administration'
     ],
     'harris': [
       'harris', 'kamala harris', 'vice president harris', 'vp harris'
     ],
-    'election_2024': [
-      'election 2024', '2024 election', 'presidential election', 'republican primary',
-      'democratic primary', 'gop primary', 'swing state', 'electoral college'
+    'election_2028': [
+      'election 2028', '2028 election', 'presidential election', 'republican primary',
+      'democratic primary', 'gop primary', 'swing state', 'electoral college', 'midterm'
     ],
     'fed': [
       'fed', 'federal reserve', 'jerome powell', 'interest rate', 'rate cut', 'rate hike',
@@ -66,6 +66,11 @@ export class TopicClusteringEngine {
     'climate': [
       'climate change', 'global warming', 'cop28', 'paris agreement', 'carbon emissions',
       'renewable energy', 'solar', 'wind power', 'esg'
+    ],
+    'earnings': [
+      'earnings', 'quarterly earnings', 'earnings report', 'eps', 'revenue beat', 
+      'earnings miss', 'guidance', 'earnings call', 'profit', 'quarterly results',
+      'earnings season', 'analyst estimates', 'revenue guidance', 'beat estimates'
     ]
   };
 
