@@ -6,6 +6,15 @@ export class TechnicalIndicatorCalculator {
   private config: BotConfig;
   private tickBuffers: Map<string, TickBuffer> = new Map();
   private macdHistory: Map<string, number[]> = new Map(); // Store MACD line history for signal calculation
+  
+  // RSI Wilder's smoothing storage
+  private rsiAvgGain: Map<string, number> = new Map();
+  private rsiAvgLoss: Map<string, number> = new Map();
+  private rsiInitialized: Map<string, boolean> = new Map();
+  
+  // MACD signal line EMA storage (to prevent lookahead bias)
+  private macdSignalEMA: Map<string, number> = new Map();
+  private macdSignalInitialized: Map<string, boolean> = new Map();
 
   constructor(config: BotConfig) {
     this.config = config;
@@ -26,7 +35,7 @@ export class TechnicalIndicatorCalculator {
     return {
       marketId,
       timestamp: tick.timestamp,
-      rsi: this.calculateRSI(prices),
+      rsi: this.calculateRSI(prices, marketId),
       macd: this.calculateMACD(prices, marketId),
       momentum: this.calculateMomentum(prices),
       vwap: buffer.calculateVWAP(60 * 60 * 1000), // 1 hour VWAP
@@ -64,29 +73,57 @@ export class TechnicalIndicatorCalculator {
     this.tickBuffers.get(tick.marketId)!.push(tick);
   }
 
-  private calculateRSI(prices: number[], period: number = 14): number {
-    if (prices.length < period + 1) return 50; // Neutral RSI
-
-    // Calculate RSI for the most recent period only
-    const recentPrices = prices.slice(-period - 1); // Get last (period + 1) prices
+  private calculateRSI(prices: number[], marketId?: string, period: number = 14): number {
+    if (prices.length < 2) return 50; // Neutral RSI
     
-    let gains = 0;
-    let losses = 0;
-
-    // Calculate average gain and loss for the recent period
-    for (let i = 1; i < recentPrices.length; i++) {
-      const change = recentPrices[i] - recentPrices[i - 1];
-      if (change > 0) {
-        gains += change;
-      } else {
-        losses -= change; // Make positive
+    // Get the current price change
+    const currentChange = prices[prices.length - 1] - prices[prices.length - 2];
+    const currentGain = currentChange > 0 ? currentChange : 0;
+    const currentLoss = currentChange < 0 ? -currentChange : 0;
+    
+    // Use market ID for persistent storage, fallback to generic key
+    const key = marketId || 'default';
+    
+    if (!this.rsiInitialized.get(key)) {
+      // Initialize with SMA for first calculation
+      if (prices.length < period + 1) return 50;
+      
+      const recentPrices = prices.slice(-period - 1);
+      let totalGains = 0;
+      let totalLosses = 0;
+      
+      for (let i = 1; i < recentPrices.length; i++) {
+        const change = recentPrices[i] - recentPrices[i - 1];
+        if (change > 0) {
+          totalGains += change;
+        } else {
+          totalLosses -= change;
+        }
       }
+      
+      this.rsiAvgGain.set(key, totalGains / period);
+      this.rsiAvgLoss.set(key, totalLosses / period);
+      this.rsiInitialized.set(key, true);
+    } else {
+      // Use Wilder's smoothing (EMA with alpha = 1/period)
+      const alpha = 1 / period;
+      const prevAvgGain = this.rsiAvgGain.get(key) || 0;
+      const prevAvgLoss = this.rsiAvgLoss.get(key) || 0;
+      
+      // Wilder's smoothing formula: new_avg = ((period-1) * prev_avg + current_value) / period
+      // Which is equivalent to: new_avg = prev_avg + alpha * (current_value - prev_avg)
+      const newAvgGain = prevAvgGain + alpha * (currentGain - prevAvgGain);
+      const newAvgLoss = prevAvgLoss + alpha * (currentLoss - prevAvgLoss);
+      
+      this.rsiAvgGain.set(key, newAvgGain);
+      this.rsiAvgLoss.set(key, newAvgLoss);
     }
-
-    const avgGain = gains / period;
-    const avgLoss = losses / period;
-
-    if (avgLoss === 0) return 100;
+    
+    const avgGain = this.rsiAvgGain.get(key) || 0;
+    const avgLoss = this.rsiAvgLoss.get(key) || 0;
+    
+    if (avgLoss === 0) return avgGain > 0 ? 100 : 50;
+    
     const rs = avgGain / avgLoss;
     return 100 - (100 / (1 + rs));
   }
@@ -100,7 +137,7 @@ export class TechnicalIndicatorCalculator {
     const ema26 = this.calculateEMA(prices, 26);
     const macdLine = ema12 - ema26;
 
-    // Store MACD line in history
+    // Store MACD line in history for reference (but don't use for signal calculation)
     if (!this.macdHistory.has(marketId)) {
       this.macdHistory.set(marketId, []);
     }
@@ -113,8 +150,26 @@ export class TechnicalIndicatorCalculator {
       history.shift();
     }
 
-    // Calculate signal line (9-period EMA of MACD line)
-    const signalLine = history.length >= 9 ? this.calculateEMA(history, 9) : macdLine;
+    // Calculate signal line incrementally to avoid lookahead bias
+    let signalLine: number;
+    
+    if (!this.macdSignalInitialized.get(marketId)) {
+      // Initialize signal line with SMA of first 9 MACD values
+      if (history.length >= 9) {
+        const initial9 = history.slice(-9);
+        signalLine = initial9.reduce((sum, val) => sum + val, 0) / 9;
+        this.macdSignalEMA.set(marketId, signalLine);
+        this.macdSignalInitialized.set(marketId, true);
+      } else {
+        signalLine = macdLine; // Use MACD line until we have enough data
+      }
+    } else {
+      // Use EMA formula: new_ema = prev_ema + alpha * (current_value - prev_ema)
+      const alpha = 2 / (9 + 1); // 9-period EMA smoothing factor
+      const prevSignal = this.macdSignalEMA.get(marketId) || macdLine;
+      signalLine = prevSignal + alpha * (macdLine - prevSignal);
+      this.macdSignalEMA.set(marketId, signalLine);
+    }
 
     return {
       line: macdLine,

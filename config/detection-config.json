@@ -2,53 +2,58 @@
   "detection": {
     "signals": {
       "volumeSpike": {
-        "multiplier": 3,
-        "windowMs": 600000,
-        "minConfidence": 0.75
+        "multiplier": 1.5,
+        "windowMs": 180000,
+        "minConfidence": 0.5
       },
       "priceMovement": {
-        "percentageThreshold": 10,
-        "timeWindowMs": 1200000,
-        "minVolume": 25000
+        "percentageThreshold": 3,
+        "timeWindowMs": 300000,
+        "minVolume": 5000,
+        "baselineExpectedChangePercent": 2
       },
       "crossMarketCorrelation": {
-        "correlationThreshold": 0.7,
+        "correlationThreshold": 0.5,
         "minMarkets": 2,
-        "zScoreThreshold": 2.5
+        "zScoreThreshold": 1.5
+      },
+      "activityDetection": {
+        "baselineActivityScore": 40,
+        "activityThreshold": 60
       }
     },
     "microstructure": {
       "orderbookImbalance": {
-        "threshold": 0.3,
-        "depth": 10,
-        "minSpreadBps": 15
+        "threshold": 0.15,
+        "depth": 20,
+        "minSpreadBps": 5
       },
       "liquidityVacuum": {
-        "depthDropThreshold": 30,
-        "spreadWidenThreshold": 2.5,
-        "durationMs": 180000
+        "depthDropThreshold": 15,
+        "spreadWidenThreshold": 1.5,
+        "durationMs": 30000
       },
       "frontRunning": {
-        "scoreThreshold": 0.7,
-        "volumeWeightThreshold": 0.6,
-        "spreadImpactThreshold": 2
+        "scoreThreshold": 0.5,
+        "volumeWeightThreshold": 0.4,
+        "spreadImpactThreshold": 1.2
       }
     },
     "statistical": {
       "anomalyDetection": {
-        "zScoreThreshold": 2.5,
-        "mahalanobisThreshold": 3,
-        "isolationForestThreshold": 0.7,
-        "lookbackPeriods": 120
+        "zScoreThreshold": 1.5,
+        "mahalanobisThreshold": 2,
+        "isolationForestThreshold": 0.5,
+        "lookbackPeriods": 72
       },
       "trendAnalysis": {
-        "trendStrengthThreshold": 0.6,
-        "volatilityThreshold": 0.4,
-        "stabilityPeriods": 24
+        "trendStrengthThreshold": 0.4,
+        "volatilityThreshold": 0.6,
+        "stabilityPeriods": 12
       }
     },
     "markets": {
-      "minVolumeThreshold": 20000,
+      "minVolumeThreshold": 40000,
       "maxMarketsToTrack": 100,
       "refreshIntervalMs": 30000,
       "inactivityTimeoutMs": 3600000

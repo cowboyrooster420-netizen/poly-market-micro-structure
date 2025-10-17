@@ -311,7 +311,7 @@ export class WebDashboard {
 
   private async getDashboardData(): Promise<DashboardData> {
     const botHealth = this.bot ? await this.bot.getHealthStatus() : null;
-    const systemMetrics = metricsCollector.getLatestMetrics();
+    const systemMetrics = metricsCollector.getCurrentMetrics();
     const workerStats = statisticalWorkerService.getPerformanceStats();
     const systemConfig = configManager.getConfig();
     
@@ -343,9 +343,12 @@ export class WebDashboard {
       },
       workerThreads: {
         activeWorkers: workerStats.activeWorkers,
-        totalTasks: workerStats.totalTasks,
-        averageProcessingTime: workerStats.averageProcessingTime,
-        errorRate: workerStats.errorRate
+        totalTasks: workerStats.workerStats.reduce((sum, worker) => sum + worker.tasksCompleted, 0),
+        averageProcessingTime: workerStats.workerStats.length > 0 ? 
+          workerStats.workerStats.reduce((sum, worker) => sum + worker.averageProcessingTime, 0) / workerStats.workerStats.length : 0,
+        errorRate: workerStats.workerStats.length > 0 ?
+          workerStats.workerStats.reduce((sum, worker) => sum + worker.errorCount, 0) / 
+          Math.max(1, workerStats.workerStats.reduce((sum, worker) => sum + worker.tasksCompleted, 0)) : 0
       }
     };
   }

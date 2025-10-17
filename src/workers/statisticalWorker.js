@@ -85,8 +85,8 @@ async function performStatisticalCalculation(data) {
   const skewness = calculateSkewness(values, mean, standardDeviation);
   const kurtosis = calculateKurtosis(values, mean, standardDeviation);
   
-  // Z-scores for outlier detection
-  const zScores = values.map(val => Math.abs((val - mean) / standardDeviation));
+  // Z-scores for outlier detection - avoid division by zero
+  const zScores = values.map(val => standardDeviation > 1e-10 ? Math.abs((val - mean) / standardDeviation) : 0);
   const outliers = values.filter((_, index) => zScores[index] > (config?.outlierThreshold || 3));
   
   return {
@@ -173,12 +173,18 @@ async function performSignalProcessing(data) {
 
 // Helper functions
 function calculateSkewness(values, mean, stdDev) {
+  if (stdDev === 0) return 0;
+  if (values.length < 3) return 0; // Need at least 3 points for skewness calculation
+  
   const n = values.length;
   const sum = values.reduce((acc, val) => acc + Math.pow((val - mean) / stdDev, 3), 0);
   return (n / ((n - 1) * (n - 2))) * sum;
 }
 
 function calculateKurtosis(values, mean, stdDev) {
+  if (stdDev === 0) return 3; // Normal distribution kurtosis = 3
+  if (values.length < 4) return 3; // Need at least 4 points for kurtosis calculation
+  
   const n = values.length;
   const sum = values.reduce((acc, val) => acc + Math.pow((val - mean) / stdDev, 4), 0);
   return ((n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3))) * sum - 
@@ -196,7 +202,7 @@ function calculatePearsonCorrelation(x, y) {
   const numerator = n * sumXY - sumX * sumY;
   const denominator = Math.sqrt((n * sumXX - sumX * sumX) * (n * sumYY - sumY * sumY));
   
-  return denominator === 0 ? 0 : numerator / denominator;
+  return Math.abs(denominator) < 1e-10 ? 0 : numerator / denominator;
 }
 
 function calculateSpearmanCorrelation(x, y) {
@@ -233,7 +239,7 @@ function performIsolationForest(values, config) {
   const stdDev = Math.sqrt(variance);
   
   values.forEach((val, index) => {
-    const isolation_score = Math.abs(val - mean) / stdDev;
+    const isolation_score = stdDev > 1e-10 ? Math.abs(val - mean) / stdDev : 0;
     if (isolation_score > threshold * 3) {
       anomalies.push({ index, value: val, score: isolation_score });
     }
@@ -253,7 +259,7 @@ function performMovingAverageDetection(values, config) {
     const variance = window.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / windowSize;
     const stdDev = Math.sqrt(variance);
     
-    const zScore = Math.abs((values[i] - mean) / stdDev);
+    const zScore = stdDev > 1e-10 ? Math.abs((values[i] - mean) / stdDev) : 0;
     if (zScore > threshold) {
       anomalies.push({ index: i, value: values[i], zScore });
     }
@@ -282,7 +288,7 @@ function normalizeSignal(signal) {
   const variance = signal.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / signal.length;
   const stdDev = Math.sqrt(variance);
   
-  return signal.map(val => (val - mean) / stdDev);
+  return signal.map(val => stdDev > 1e-10 ? (val - mean) / stdDev : 0);
 }
 
 function detrendSignal(signal) {
@@ -296,8 +302,9 @@ function detrendSignal(signal) {
   const sumXY = x.reduce((sum, xi, i) => sum + xi * signal[i], 0);
   const sumXX = x.reduce((sum, xi) => sum + xi * xi, 0);
   
-  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-  const intercept = (sumY - slope * sumX) / n;
+  const slopeDenominator = n * sumXX - sumX * sumX;
+  const slope = Math.abs(slopeDenominator) < 1e-10 ? 0 : (n * sumXY - sumX * sumY) / slopeDenominator;
+  const intercept = n > 0 ? (sumY - slope * sumX) / n : 0;
   
   // Remove trend
   return signal.map((val, i) => val - (slope * i + intercept));

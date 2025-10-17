@@ -15,11 +15,16 @@ export interface DetectionThresholds {
       percentageThreshold: number; // Price movement threshold percentage
       timeWindowMs: number;        // Time window for price movement
       minVolume: number;           // Minimum volume required
+      baselineExpectedChangePercent: number; // Expected baseline price change for confidence calculation
     };
     crossMarketCorrelation: {
       correlationThreshold: number; // Minimum correlation for coordinated movement
       minMarkets: number;          // Minimum markets needed for correlation
       zScoreThreshold: number;     // Z-score threshold for significance
+    };
+    activityDetection: {
+      baselineActivityScore: number; // Expected baseline activity score for confidence calculation
+      activityThreshold: number;     // Minimum activity score to trigger alert
     };
   };
   
@@ -282,8 +287,9 @@ export class ConfigManager {
       conservative: {
         signals: {
           volumeSpike: { multiplier: 5.0, windowMs: 900000, minConfidence: 0.9 },
-          priceMovement: { percentageThreshold: 15, timeWindowMs: 1800000, minVolume: 50000 },
-          crossMarketCorrelation: { correlationThreshold: 0.8, minMarkets: 3, zScoreThreshold: 3.0 }
+          priceMovement: { percentageThreshold: 15, timeWindowMs: 1800000, minVolume: 50000, baselineExpectedChangePercent: 7 },
+          crossMarketCorrelation: { correlationThreshold: 0.8, minMarkets: 3, zScoreThreshold: 3.0 },
+          activityDetection: { baselineActivityScore: 70, activityThreshold: 90 }
         },
         microstructure: {
           orderbookImbalance: { threshold: 0.4, depth: 5, minSpreadBps: 20 },
@@ -299,8 +305,9 @@ export class ConfigManager {
       balanced: {
         signals: {
           volumeSpike: { multiplier: 3.0, windowMs: 600000, minConfidence: 0.75 },
-          priceMovement: { percentageThreshold: 10, timeWindowMs: 1200000, minVolume: 25000 },
-          crossMarketCorrelation: { correlationThreshold: 0.7, minMarkets: 2, zScoreThreshold: 2.5 }
+          priceMovement: { percentageThreshold: 10, timeWindowMs: 1200000, minVolume: 25000, baselineExpectedChangePercent: 5 },
+          crossMarketCorrelation: { correlationThreshold: 0.7, minMarkets: 2, zScoreThreshold: 2.5 },
+          activityDetection: { baselineActivityScore: 60, activityThreshold: 80 }
         },
         microstructure: {
           orderbookImbalance: { threshold: 0.3, depth: 10, minSpreadBps: 15 },
@@ -316,8 +323,9 @@ export class ConfigManager {
       aggressive: {
         signals: {
           volumeSpike: { multiplier: 2.0, windowMs: 300000, minConfidence: 0.6 },
-          priceMovement: { percentageThreshold: 5, timeWindowMs: 600000, minVolume: 10000 },
-          crossMarketCorrelation: { correlationThreshold: 0.6, minMarkets: 2, zScoreThreshold: 2.0 }
+          priceMovement: { percentageThreshold: 5, timeWindowMs: 600000, minVolume: 10000, baselineExpectedChangePercent: 3 },
+          crossMarketCorrelation: { correlationThreshold: 0.6, minMarkets: 2, zScoreThreshold: 2.0 },
+          activityDetection: { baselineActivityScore: 50, activityThreshold: 70 }
         },
         microstructure: {
           orderbookImbalance: { threshold: 0.2, depth: 15, minSpreadBps: 10 },
@@ -333,8 +341,9 @@ export class ConfigManager {
       development: {
         signals: {
           volumeSpike: { multiplier: 1.5, windowMs: 180000, minConfidence: 0.5 },
-          priceMovement: { percentageThreshold: 3, timeWindowMs: 300000, minVolume: 5000 },
-          crossMarketCorrelation: { correlationThreshold: 0.5, minMarkets: 2, zScoreThreshold: 1.5 }
+          priceMovement: { percentageThreshold: 3, timeWindowMs: 300000, minVolume: 5000, baselineExpectedChangePercent: 2 },
+          crossMarketCorrelation: { correlationThreshold: 0.5, minMarkets: 2, zScoreThreshold: 1.5 },
+          activityDetection: { baselineActivityScore: 40, activityThreshold: 60 }
         },
         microstructure: {
           orderbookImbalance: { threshold: 0.15, depth: 20, minSpreadBps: 5 },
@@ -380,12 +389,17 @@ export class ConfigManager {
           priceMovement: {
             percentageThreshold: 10,
             timeWindowMs: 1200000, // 20 minutes
-            minVolume: 25000
+            minVolume: 25000,
+            baselineExpectedChangePercent: 5
           },
           crossMarketCorrelation: {
             correlationThreshold: 0.7,
             minMarkets: 2,
             zScoreThreshold: 2.5
+          },
+          activityDetection: {
+            baselineActivityScore: 60,
+            activityThreshold: 80
           }
         },
         microstructure: {

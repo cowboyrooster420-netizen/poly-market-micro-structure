@@ -5,7 +5,7 @@ import { MetricsCollector } from '../monitoring/MetricsCollector';
 
 export interface WorkerTask {
   id: string;
-  type: 'statistical_calculation' | 'signal_processing' | 'data_analysis' | 'correlation_analysis';
+  type: 'statistical_calculation' | 'signal_processing' | 'data_analysis' | 'correlation_analysis' | 'anomaly_detection';
   data: any;
   priority: 'low' | 'medium' | 'high' | 'critical';
   timestamp: number;

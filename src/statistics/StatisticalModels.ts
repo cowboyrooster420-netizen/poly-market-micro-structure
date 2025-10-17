@@ -497,16 +497,25 @@ export class StatisticalModels {
 
   private calculateSkewness(data: number[], mean: number, stdDev: number): number {
     if (stdDev === 0) return 0;
+    if (data.length < 3) return 0; // Need at least 3 points for skewness calculation
+    
     const n = data.length;
     const sum = data.reduce((acc, val) => acc + Math.pow((val - mean) / stdDev, 3), 0);
     return (n / ((n - 1) * (n - 2))) * sum;
   }
 
   private calculateKurtosis(data: number[], mean: number, stdDev: number): number {
-    if (stdDev === 0) return 0;
+    if (stdDev === 0) return 3; // Normal distribution kurtosis = 3
+    if (data.length < 4) return 3; // Need at least 4 points for kurtosis calculation
+    
     const n = data.length;
     const sum = data.reduce((acc, val) => acc + Math.pow((val - mean) / stdDev, 4), 0);
-    return ((n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3))) * sum - (3 * (n - 1) * (n - 1)) / ((n - 2) * (n - 3));
+    
+    // Calculate excess kurtosis first
+    const excessKurtosis = ((n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3))) * sum - (3 * (n - 1) * (n - 1)) / ((n - 2) * (n - 3));
+    
+    // Return regular kurtosis (excess + 3) since the code expects normal distribution = 3
+    return excessKurtosis + 3;
   }
 
   private normalCDF(z: number): number {
@@ -625,5 +634,55 @@ export class StatisticalModels {
     // For now, return recent data as a placeholder
     const data = buffer.getAll();
     return data.slice(-Math.min(20, data.length)); // Recent 20 points as proxy
+  }
+
+  /**
+   * Calculate Pearson correlation coefficient between two datasets
+   */
+  calculateCorrelation(x: number[], y: number[]): number {
+    if (x.length !== y.length || x.length < 2) {
+      return 0;
+    }
+
+    const n = x.length;
+    const sumX = x.reduce((a, b) => a + b, 0);
+    const sumY = y.reduce((a, b) => a + b, 0);
+    const sumXY = x.reduce((sum, xi, i) => sum + xi * y[i], 0);
+    const sumXX = x.reduce((sum, xi) => sum + xi * xi, 0);
+    const sumYY = y.reduce((sum, yi) => sum + yi * yi, 0);
+
+    const numerator = n * sumXY - sumX * sumY;
+    const denominator = Math.sqrt((n * sumXX - sumX * sumX) * (n * sumYY - sumY * sumY));
+
+    // Use proper epsilon comparison for floating-point safety
+    return Math.abs(denominator) < 1e-10 ? 0 : numerator / denominator;
+  }
+
+  /**
+   * Calculate Spearman rank correlation coefficient between two datasets
+   */
+  calculateSpearmanCorrelation(x: number[], y: number[]): number {
+    if (x.length !== y.length || x.length < 2) {
+      return 0;
+    }
+
+    // Convert to ranks
+    const xRanks = this.convertToRanks(x);
+    const yRanks = this.convertToRanks(y);
+
+    // Calculate Pearson correlation of ranks
+    return this.calculateCorrelation(xRanks, yRanks);
+  }
+
+  private convertToRanks(data: number[]): number[] {
+    const indexed = data.map((value, index) => ({ value, index }));
+    indexed.sort((a, b) => a.value - b.value);
+    
+    const ranks = new Array(data.length);
+    for (let i = 0; i < indexed.length; i++) {
+      ranks[indexed[i].index] = i + 1; // Ranks start from 1
+    }
+    
+    return ranks;
   }
 }

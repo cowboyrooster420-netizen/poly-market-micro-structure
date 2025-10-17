@@ -12,6 +12,14 @@ export class SignalDetector {
   private lastScanTime = 0;
   private orderbookAnalyzer: OrderbookAnalyzer;
   private technicalIndicators: TechnicalIndicatorCalculator;
+  private recentSignals: Map<string, { signalType: string; timestamp: number; }[]> = new Map();
+  
+  // Statistical activity score storage for percentile-based scoring
+  private activityDistributions: Map<string, {
+    volumeChanges: number[];
+    priceChanges: number[];
+    competitivenessScores: number[];
+  }> = new Map();
 
   constructor(config: BotConfig) {
     this.config = config;
@@ -62,41 +70,60 @@ export class SignalDetector {
         marketsWithHistory++;
       }
 
-      // Detect various signal types
+      // Detect various signal types with deduplication
       const newMarketSignal = this.detectNewMarket(market, currentTime);
-      if (newMarketSignal) {
+      if (newMarketSignal && !this.isDuplicateSignal(market.id, newMarketSignal.signalType, currentTime)) {
         signals.push(newMarketSignal);
+        this.recordSignal(market.id, newMarketSignal.signalType, currentTime);
         newMarketCount++;
       }
 
       const volumeSpikeSignal = this.detectVolumeSpike(market, currentTime);
-      if (volumeSpikeSignal) {
+      if (volumeSpikeSignal && !this.isDuplicateSignal(market.id, volumeSpikeSignal.signalType, currentTime)) {
         signals.push(volumeSpikeSignal);
+        this.recordSignal(market.id, volumeSpikeSignal.signalType, currentTime);
         volumeSpikeCount++;
       }
 
       const priceMovementSignal = this.detectPriceMovement(market, currentTime);
-      if (priceMovementSignal) {
+      if (priceMovementSignal && !this.isDuplicateSignal(market.id, priceMovementSignal.signalType, currentTime)) {
         signals.push(priceMovementSignal);
+        this.recordSignal(market.id, priceMovementSignal.signalType, currentTime);
         priceMovementCount++;
       }
 
       const unusualActivitySignal = this.detectUnusualActivity(market, currentTime);
-      if (unusualActivitySignal) {
+      if (unusualActivitySignal && !this.isDuplicateSignal(market.id, unusualActivitySignal.signalType, currentTime)) {
         signals.push(unusualActivitySignal);
+        this.recordSignal(market.id, unusualActivitySignal.signalType, currentTime);
         unusualActivityCount++;
       }
     }
 
     this.lastScanTime = currentTime;
     
-    // Debug logging to show detection stats
-    logger.debug(`Detection stats: ${marketsWithHistory} markets with history, checked ${markets.length} markets`);
-    if (signals.length === 0) {
-      logger.debug(`No signals found - new:${newMarketCount}, volume:${volumeSpikeCount}, price:${priceMovementCount}, activity:${unusualActivityCount}`);
+    // Periodically perform comprehensive memory cleanup (every hour)
+    const oneHour = 60 * 60 * 1000;
+    if (currentTime % oneHour < 30000) { // Check if we're within 30 seconds of the hour
+      const activeMarketIds = new Set(markets.map(m => m.id));
+      this.performMemoryCleanup(currentTime, activeMarketIds);
+    } else if (currentTime % (10 * 60 * 1000) < 30000) {
+      // Quick signal cleanup every 10 minutes
+      this.cleanupOldSignals(currentTime);
     }
     
-    return signals;
+    // Apply multiple testing correction to reduce false positives
+    const correctedSignals = this.applyMultipleTestingCorrection(signals, markets.length);
+    
+    // Debug logging to show detection stats
+    logger.debug(`Detection stats: ${marketsWithHistory} markets with history, checked ${markets.length} markets`);
+    if (correctedSignals.length === 0) {
+      logger.debug(`No signals found after correction - new:${newMarketCount}, volume:${volumeSpikeCount}, price:${priceMovementCount}, activity:${unusualActivityCount}`);
+    } else if (correctedSignals.length < signals.length) {
+      logger.debug(`Multiple testing correction: ${signals.length} → ${correctedSignals.length} signals (${((1 - correctedSignals.length/signals.length) * 100).toFixed(1)}% filtered)`);
+    }
+    
+    return correctedSignals;
   }
 
   // New methods for real-time microstructure analysis
@@ -163,8 +190,12 @@ export class SignalDetector {
     history.push(currentMetrics);
 
     // Keep only last 24 hours of data (assuming 30s intervals = 2880 data points)
-    if (history.length > 2880) {
-      history.shift();
+    // Use more aggressive cleanup for memory efficiency
+    const maxDataPoints = 2880;
+    if (history.length > maxDataPoints) {
+      // Remove oldest entries in batches for better performance
+      const excessEntries = history.length - maxDataPoints;
+      history.splice(0, excessEntries);
     }
   }
 
@@ -198,31 +229,49 @@ export class SignalDetector {
     const history = this.marketHistory.get(market.id);
     if (!history || history.length < 5) return null;
 
-    const recent = history.slice(-5);
-    const avgVolume = recent.reduce((sum, m) => sum + m.volume24h, 0) / recent.length;
-    const volumeMultiplier = avgVolume > 0 ? market.volumeNum / avgVolume : 0;
+    const currentMetrics = history[history.length - 1];
+    if (!currentMetrics) return null;
+
+    // Use incremental volume change, not cumulative 24h volume
+    // Only consider positive volume changes for spike detection
+    const recentVolumeChanges = history.slice(-5).map(m => Math.max(0, m.volumeChange || 0));
+    const avgVolumeChange = recentVolumeChanges.reduce((sum, change) => sum + change, 0) / recentVolumeChanges.length;
+    
+    const currentVolumeChange = currentMetrics.volumeChange || 0;
     
     // Debug logging for top markets
     if (market.volumeNum > this.config.minVolumeThreshold * 5) {
-      logger.debug(`Volume check - ${market.question?.substring(0, 40)}: current=$${market.volumeNum.toFixed(0)}, avg=$${avgVolume.toFixed(0)}, multiplier=${volumeMultiplier.toFixed(2)}x`);
+      logger.debug(`Volume check - ${market.question?.substring(0, 40)}: current change=${currentVolumeChange.toFixed(1)}%, avg change=${avgVolumeChange.toFixed(1)}%`);
     }
     
     // Detect volume spike using configuration threshold
     const systemConfig = configManager.getConfig();
     const multiplierThreshold = systemConfig.detection.signals.volumeSpike.multiplier;
     
-    if (market.volumeNum > avgVolume * multiplierThreshold && market.volumeNum > this.config.minVolumeThreshold * 5) {
-      logger.info(`🚨 VOLUME SPIKE: ${market.question?.substring(0, 50)} - ${volumeMultiplier.toFixed(1)}x increase!`);
+    // Only trigger if current volume change is significantly higher than recent average
+    // and the market has meaningful baseline volume - MUST BE POSITIVE (increase only)
+    if (currentVolumeChange > 0 && // Must be an actual increase
+        currentVolumeChange > avgVolumeChange * multiplierThreshold && 
+        currentVolumeChange > 25 && // At least 25% volume increase
+        market.volumeNum > this.config.minVolumeThreshold * 2) {
+      
+      logger.info(`🚨 VOLUME SPIKE: ${market.question?.substring(0, 50)} - ${currentVolumeChange.toFixed(1)}% volume increase!`);
       return {
         marketId: market.id,
         market,
         signalType: 'volume_spike',
-        confidence: Math.min(0.9, (market.volumeNum / avgVolume) / 10),
+        confidence: this.calculateStatisticalConfidence(
+          currentVolumeChange, 
+          avgVolumeChange, 
+          Math.max(avgVolumeChange * 0.2, 1), // Standard error estimate
+          0.9
+        ),
         timestamp,
         metadata: {
           currentVolume: market.volumeNum,
-          averageVolume: avgVolume,
-          spikeMultiplier: market.volumeNum / avgVolume,
+          volumeChangePercent: currentVolumeChange,
+          averageVolumeChange: avgVolumeChange,
+          spikeMultiplier: avgVolumeChange > 0 ? currentVolumeChange / avgVolumeChange : 0,
         },
       };
     }
@@ -234,31 +283,56 @@ export class SignalDetector {
     const history = this.marketHistory.get(market.id);
     if (!history || history.length < 3) return null;
 
+    // Check multiple time windows for price movement (removes 30s delay)
     const latest = history[history.length - 1];
-    const priceChanges = Object.values(latest.priceChange);
+    const oneIntervalAgo = history[history.length - 2];
+    const twoIntervalsAgo = history.length > 2 ? history[history.length - 3] : null;
     
-    // Look for significant price changes (>10% in short time)
-    const maxPriceChange = priceChanges.length > 0 ? Math.max(...priceChanges.map(Math.abs)) : 0;
+    // Calculate immediate price change (latest vs previous)
+    const immediatePriceChanges = Object.values(latest.priceChange);
+    const maxImmediateChange = immediatePriceChanges.length > 0 ? Math.max(...immediatePriceChanges.map(Math.abs)) : 0;
+    
+    // Calculate cumulative price change over 2-3 intervals for trend detection
+    let maxCumulativeChange = 0;
+    if (twoIntervalsAgo && latest.prices && twoIntervalsAgo.prices) {
+      for (let i = 0; i < latest.prices.length; i++) {
+        if (Math.abs(twoIntervalsAgo.prices[i]) > 1e-10) {
+          const cumulativeChange = Math.abs(((latest.prices[i] - twoIntervalsAgo.prices[i]) / twoIntervalsAgo.prices[i]) * 100);
+          maxCumulativeChange = Math.max(maxCumulativeChange, cumulativeChange);
+        }
+      }
+    }
+    
+    const finalMaxChange = Math.max(maxImmediateChange, maxCumulativeChange);
     
     // Debug log significant price movements (>5%)
-    if (maxPriceChange > 5) {
-      logger.debug(`Price movement - ${market.question?.substring(0, 40)}: ${maxPriceChange.toFixed(2)}% change, volume=$${market.volumeNum.toFixed(0)}`);
+    if (finalMaxChange > 5) {
+      logger.debug(`Price movement - ${market.question?.substring(0, 40)}: immediate=${maxImmediateChange.toFixed(1)}%, cumulative=${maxCumulativeChange.toFixed(1)}%, volume=$${market.volumeNum.toFixed(0)}`);
     }
     
     const systemConfig = configManager.getConfig();
     const priceThreshold = systemConfig.detection.signals.priceMovement.percentageThreshold;
     
-    if (maxPriceChange > priceThreshold && market.volumeNum > this.config.minVolumeThreshold) {
-      logger.info(`🚨 PRICE MOVEMENT: ${market.question?.substring(0, 50)} - ${maxPriceChange.toFixed(1)}% change!`);
+    if (finalMaxChange > priceThreshold && market.volumeNum > this.config.minVolumeThreshold) {
+      const movementType = maxImmediateChange > maxCumulativeChange ? 'sudden' : 'trending';
+      logger.info(`🚨 PRICE MOVEMENT: ${market.question?.substring(0, 50)} - ${finalMaxChange.toFixed(1)}% ${movementType} change!`);
       return {
         marketId: market.id,
         market,
         signalType: 'price_movement',
-        confidence: Math.min(0.9, maxPriceChange / 50),
+        confidence: this.calculateStatisticalConfidence(
+          finalMaxChange,
+          configManager.getConfig().detection.signals.priceMovement.baselineExpectedChangePercent,
+          2, // Standard error estimate for price changes
+          0.9
+        ),
         timestamp,
         metadata: {
           priceChanges: latest.priceChange,
-          maxChange: maxPriceChange,
+          maxChange: finalMaxChange,
+          immediateChange: maxImmediateChange,
+          cumulativeChange: maxCumulativeChange,
+          movementType,
         },
       };
     }
@@ -273,12 +347,18 @@ export class SignalDetector {
     const latest = history[history.length - 1];
     
     // High activity score indicates unusual market behavior
-    if (latest.activityScore > 80 && market.volumeNum > this.config.minVolumeThreshold) {
+    const activityConfig = configManager.getConfig().detection.signals.activityDetection;
+    if (latest.activityScore > activityConfig.activityThreshold && market.volumeNum > this.config.minVolumeThreshold) {
       return {
         marketId: market.id,
         market,
         signalType: 'unusual_activity',
-        confidence: latest.activityScore / 100,
+        confidence: this.calculateStatisticalConfidence(
+          latest.activityScore,
+          activityConfig.baselineActivityScore,
+          15, // Standard error estimate for activity scores
+          0.95
+        ),
         timestamp,
         metadata: {
           activityScore: latest.activityScore,
@@ -297,7 +377,7 @@ export class SignalDetector {
     
     currentPrices.forEach((currentPrice, index) => {
       const previousPrice = previousMetrics.prices[index];
-      if (previousPrice && previousPrice > 0) {
+      if (previousPrice && Math.abs(previousPrice) > 1e-10) {
         const change = ((currentPrice - previousPrice) / previousPrice) * 100;
         changes[`outcome_${index}`] = change;
       } else {
@@ -309,29 +389,367 @@ export class SignalDetector {
   }
 
   private calculateActivityScore(market: Market, previousMetrics?: MarketMetrics): number {
-    let score = 0;
+    const marketId = market.id;
+    
+    // Calculate current metrics
+    const currentVolumeChange = previousMetrics ? 
+      ((market.volumeNum - previousMetrics.volume24h) / Math.max(previousMetrics.volume24h, 1)) * 100 : 0;
+    
+    const prices = market.outcomePrices.map(p => parseFloat(p));
+    let maxPriceChange = 0;
+    if (previousMetrics && previousMetrics.prices && previousMetrics.prices.length === prices.length) {
+      for (let i = 0; i < prices.length; i++) {
+        if (Math.abs(previousMetrics.prices[i]) > 1e-10) {
+          const priceChange = Math.abs((prices[i] - previousMetrics.prices[i]) / previousMetrics.prices[i]) * 100;
+          maxPriceChange = Math.max(maxPriceChange, priceChange);
+        }
+      }
+    }
+    
+    const priceSpread = Math.max(...prices) - Math.min(...prices);
+    const competitiveness = 1 - priceSpread; // Higher when prices are close (competitive market)
+    
+    // Update historical distributions
+    this.updateActivityDistribution(marketId, currentVolumeChange, maxPriceChange, competitiveness);
+    
+    // Calculate percentile-based scores (0-100 scale)
+    const volumeScore = this.calculatePercentileScore(marketId, 'volumeChanges', currentVolumeChange, 30);
+    const priceScore = this.calculatePercentileScore(marketId, 'priceChanges', maxPriceChange, 30);
+    const competitivenessScore = this.calculatePercentileScore(marketId, 'competitivenessScores', competitiveness, 25);
+    
+    // Volume factor based on z-score relative to minimum threshold
+    const volumeRatio = market.volumeNum / this.config.minVolumeThreshold;
+    const volumeFactorScore = Math.min(15, Math.max(0, Math.log10(volumeRatio) * 5)); // Logarithmic scaling
+    
+    const totalScore = volumeScore + priceScore + competitivenessScore + volumeFactorScore;
+    return Math.min(100, Math.max(0, totalScore));
+  }
 
-    // Volume component (0-40 points)
-    if (market.volumeNum > this.config.minVolumeThreshold * 10) score += 40;
-    else if (market.volumeNum > this.config.minVolumeThreshold * 5) score += 30;
-    else if (market.volumeNum > this.config.minVolumeThreshold * 2) score += 20;
-    else score += 10;
+  /**
+   * Update historical distribution for statistical activity scoring
+   */
+  private updateActivityDistribution(marketId: string, volumeChange: number, priceChange: number, competitiveness: number): void {
+    if (!this.activityDistributions.has(marketId)) {
+      this.activityDistributions.set(marketId, {
+        volumeChanges: [],
+        priceChanges: [],
+        competitivenessScores: []
+      });
+    }
+    
+    const dist = this.activityDistributions.get(marketId)!;
+    
+    // Add current values
+    dist.volumeChanges.push(volumeChange);
+    dist.priceChanges.push(priceChange);
+    dist.competitivenessScores.push(competitiveness);
+    
+    // Keep only last 100 observations to prevent memory bloat and adapt to changing conditions
+    const maxHistory = 100;
+    if (dist.volumeChanges.length > maxHistory) {
+      dist.volumeChanges.shift();
+    }
+    if (dist.priceChanges.length > maxHistory) {
+      dist.priceChanges.shift();
+    }
+    if (dist.competitivenessScores.length > maxHistory) {
+      dist.competitivenessScores.shift();
+    }
+  }
 
-    // Volume change component (0-30 points)
-    if (previousMetrics) {
-      if (previousMetrics.volumeChange > 200) score += 30;
-      else if (previousMetrics.volumeChange > 100) score += 20;
-      else if (previousMetrics.volumeChange > 50) score += 10;
+  /**
+   * Calculate percentile-based score for a metric
+   */
+  private calculatePercentileScore(marketId: string, metric: 'volumeChanges' | 'priceChanges' | 'competitivenessScores', currentValue: number, maxPoints: number): number {
+    const dist = this.activityDistributions.get(marketId);
+    if (!dist || dist[metric].length < 10) {
+      // Not enough data - use simple thresholds as fallback
+      if (metric === 'volumeChanges') {
+        return currentValue > 10 ? maxPoints * 0.8 : maxPoints * 0.4;
+      } else if (metric === 'priceChanges') {
+        return currentValue > 2 ? maxPoints * 0.8 : maxPoints * 0.4;
+      } else {
+        return currentValue > 0.6 ? maxPoints * 0.8 : maxPoints * 0.4;
+      }
+    }
+    
+    const data = [...dist[metric]].sort((a, b) => a - b);
+    const n = data.length;
+    
+    // Find percentile rank of current value
+    let rank = 0;
+    for (let i = 0; i < n; i++) {
+      if (data[i] <= currentValue) {
+        rank = i + 1;
+      } else {
+        break;
+      }
+    }
+    
+    const percentile = rank / n;
+    
+    // Convert percentile to score (higher percentile = higher score)
+    // Use exponential scaling to emphasize extreme values
+    const exponentialScore = Math.pow(percentile, 1.5);
+    return exponentialScore * maxPoints;
+  }
+
+  /**
+   * Calculate statistically sound confidence based on z-score and effect size
+   */
+  private calculateStatisticalConfidence(observedValue: number, baseline: number, standardError: number, maxConfidence: number = 0.95): number {
+    if (standardError <= 1e-10) {
+      // No variability - confidence based on magnitude
+      return observedValue > baseline ? maxConfidence * 0.8 : 0.3;
+    }
+    
+    // Calculate z-score
+    const zScore = Math.abs((observedValue - baseline) / standardError);
+    
+    // Convert z-score to confidence using cumulative normal distribution
+    // Z-score of 1.96 = 95% confidence, 2.58 = 99% confidence
+    let confidence: number;
+    if (zScore >= 2.58) {
+      confidence = 0.99;
+    } else if (zScore >= 1.96) {
+      confidence = 0.95;
+    } else if (zScore >= 1.645) {
+      confidence = 0.90;
+    } else if (zScore >= 1.28) {
+      confidence = 0.80;
+    } else if (zScore >= 1.0) {
+      confidence = 0.68;
+    } else {
+      // Linear interpolation for lower z-scores
+      confidence = 0.5 + (zScore / 2.0) * 0.18; // Scale from 0.5 to 0.68
+    }
+    
+    return Math.min(maxConfidence, confidence);
+  }
+
+  /**
+   * Calculate effect size (Cohen's d) for magnitude assessment
+   */
+  private calculateEffectSize(observedValue: number, baseline: number, standardDeviation: number): number {
+    if (standardDeviation <= 1e-10) return 0;
+    return Math.abs(observedValue - baseline) / standardDeviation;
+  }
+
+  /**
+   * Apply multiple testing correction to reduce false positives
+   * Uses Benjamini-Hochberg (FDR) method which is less conservative than Bonferroni
+   */
+  private applyMultipleTestingCorrection(signals: EarlySignal[], numMarkets: number): EarlySignal[] {
+    if (signals.length === 0) return signals;
+    
+    // Calculate the number of tests performed
+    const signalTypes = 4; // new_market, volume_spike, price_movement, unusual_activity
+    const totalTests = numMarkets * signalTypes;
+    
+    // Sort signals by confidence (descending)
+    const sortedSignals = [...signals].sort((a, b) => b.confidence - a.confidence);
+    
+    // Apply Benjamini-Hochberg FDR correction
+    const fdr = 0.05; // 5% false discovery rate
+    const correctedSignals: EarlySignal[] = [];
+    
+    for (let i = 0; i < sortedSignals.length; i++) {
+      const signal = sortedSignals[i];
+      const rank = i + 1;
+      
+      // Calculate p-value from confidence (1 - confidence)
+      const pValue = 1 - signal.confidence;
+      
+      // Benjamini-Hochberg critical value
+      const criticalValue = (rank / totalTests) * fdr;
+      
+      // If p-value <= critical value, signal is significant
+      if (pValue <= criticalValue) {
+        correctedSignals.push(signal);
+      } else {
+        // Since signals are sorted, all remaining signals will also fail
+        break;
+      }
+    }
+    
+    // Alternative: Use Bonferroni correction for more conservative approach
+    // Uncomment below for Bonferroni instead of FDR
+    /*
+    const bonferroniAlpha = 0.05 / totalTests;
+    const bonferroniSignals = signals.filter(signal => {
+      const pValue = 1 - signal.confidence;
+      return pValue <= bonferroniAlpha;
+    });
+    */
+    
+    // Log correction statistics
+    if (signals.length > correctedSignals.length) {
+      logger.debug(`Multiple testing correction (FDR): ${totalTests} tests, ${signals.length} raw signals, ${correctedSignals.length} corrected signals`);
+    }
+    
+    return correctedSignals;
+  }
+
+  /**
+   * Calculate adjusted p-value using Benjamini-Hochberg method
+   */
+  private calculateAdjustedPValue(pValue: number, rank: number, totalTests: number, fdr: number = 0.05): number {
+    return Math.min(1, pValue * totalTests / rank);
+  }
+
+  /**
+   * Check if a signal is a duplicate within the cooldown period
+   */
+  private isDuplicateSignal(marketId: string, signalType: string, currentTime: number): boolean {
+    const marketSignals = this.recentSignals.get(marketId);
+    if (!marketSignals) return false;
+
+    // Define cooldown periods for different signal types (in milliseconds)
+    const cooldownPeriods: Record<string, number> = {
+      'new_market': 60 * 60 * 1000,        // 1 hour - new markets don't change often
+      'volume_spike': 10 * 60 * 1000,      // 10 minutes - volume can spike multiple times
+      'price_movement': 5 * 60 * 1000,     // 5 minutes - price movements can be frequent
+      'unusual_activity': 15 * 60 * 1000,  // 15 minutes - activity patterns change gradually
+      'coordinated_cross_market': 30 * 60 * 1000, // 30 minutes - cross-market coordination is significant
+    };
+
+    const cooldownTime = cooldownPeriods[signalType] || 10 * 60 * 1000; // Default 10 minutes
+
+    // Check if we've seen this signal type recently for this market
+    const recentSignal = marketSignals.find(signal => 
+      signal.signalType === signalType && 
+      (currentTime - signal.timestamp) < cooldownTime
+    );
+
+    if (recentSignal) {
+      const minutesAgo = Math.floor((currentTime - recentSignal.timestamp) / (60 * 1000));
+      logger.debug(`Duplicate signal suppressed: ${signalType} for market ${marketId.substring(0, 8)}... (last seen ${minutesAgo}min ago)`);
+      return true;
     }
 
-    // Price balance component (0-30 points)
-    const prices = market.outcomePrices.map(p => parseFloat(p));
-    const priceBalance = Math.abs(0.5 - Math.min(...prices));
-    if (priceBalance < 0.1) score += 30; // Close to 50/50
-    else if (priceBalance < 0.2) score += 20;
-    else if (priceBalance < 0.3) score += 10;
+    return false;
+  }
 
-    return Math.min(100, score);
+  /**
+   * Record a signal for deduplication tracking
+   */
+  private recordSignal(marketId: string, signalType: string, timestamp: number): void {
+    if (!this.recentSignals.has(marketId)) {
+      this.recentSignals.set(marketId, []);
+    }
+
+    const marketSignals = this.recentSignals.get(marketId)!;
+    marketSignals.push({ signalType, timestamp });
+
+    // Clean up old signals (keep only last 24 hours)
+    const oneDayAgo = timestamp - (24 * 60 * 60 * 1000);
+    const filteredSignals = marketSignals.filter(signal => signal.timestamp > oneDayAgo);
+    this.recentSignals.set(marketId, filteredSignals);
+
+    // Clean up empty entries
+    if (filteredSignals.length === 0) {
+      this.recentSignals.delete(marketId);
+    }
+  }
+
+  /**
+   * Clean up old signal records to prevent memory leaks
+   */
+  private cleanupOldSignals(currentTime: number): void {
+    const oneDayAgo = currentTime - (24 * 60 * 60 * 1000);
+    
+    for (const [marketId, signals] of this.recentSignals.entries()) {
+      const filteredSignals = signals.filter(signal => signal.timestamp > oneDayAgo);
+      
+      if (filteredSignals.length === 0) {
+        this.recentSignals.delete(marketId);
+      } else {
+        this.recentSignals.set(marketId, filteredSignals);
+      }
+    }
+  }
+
+  /**
+   * Comprehensive memory cleanup for inactive markets and old data
+   */
+  private performMemoryCleanup(currentTime: number, activeMarketIds: Set<string>): void {
+    const oneDayAgo = currentTime - (24 * 60 * 60 * 1000);
+    const oneWeekAgo = currentTime - (7 * 24 * 60 * 60 * 1000);
+    
+    // Clean up market history for inactive markets
+    const marketsToRemove: string[] = [];
+    
+    for (const [marketId, history] of this.marketHistory.entries()) {
+      const lastUpdate = history.length > 0 ? history[history.length - 1].lastUpdated : 0;
+      
+      // Remove markets that haven't been updated in over a week
+      if (lastUpdate < oneWeekAgo) {
+        marketsToRemove.push(marketId);
+        continue;
+      }
+      
+      // For markets not currently active, keep only essential data
+      if (!activeMarketIds.has(marketId) && lastUpdate < oneDayAgo) {
+        // Keep only the last 100 data points for inactive markets
+        if (history.length > 100) {
+          const recentHistory = history.slice(-100);
+          this.marketHistory.set(marketId, recentHistory);
+        }
+      }
+      
+      // Clean up old data from active markets (keep last 2880 points = 24 hours)
+      if (history.length > 2880) {
+        const trimmedHistory = history.slice(-2880);
+        this.marketHistory.set(marketId, trimmedHistory);
+      }
+    }
+    
+    // Remove completely inactive markets
+    for (const marketId of marketsToRemove) {
+      this.marketHistory.delete(marketId);
+      this.recentSignals.delete(marketId);
+    }
+    
+    // Force garbage collection if too much memory is being used
+    const memoryUsage = process.memoryUsage();
+    const heapUsedMB = memoryUsage.heapUsed / (1024 * 1024);
+    
+    if (heapUsedMB > 500) { // If using more than 500MB
+      advancedLogger.warn('High memory usage detected, performing aggressive cleanup', {
+        component: 'signal_detector',
+        operation: 'memory_cleanup',
+        metadata: {
+          heapUsedMB: heapUsedMB.toFixed(1),
+          marketsTracked: this.marketHistory.size,
+          marketsRemoved: marketsToRemove.length
+        }
+      });
+      
+      // More aggressive cleanup for high memory usage
+      for (const [marketId, history] of this.marketHistory.entries()) {
+        if (!activeMarketIds.has(marketId)) {
+          // Keep only last 50 points for inactive markets during high memory usage
+          if (history.length > 50) {
+            this.marketHistory.set(marketId, history.slice(-50));
+          }
+        }
+      }
+      
+      // Suggest garbage collection
+      if (global.gc) {
+        global.gc();
+      }
+    } else if (marketsToRemove.length > 0) {
+      advancedLogger.info('Routine memory cleanup completed', {
+        component: 'signal_detector',
+        operation: 'memory_cleanup',
+        metadata: {
+          heapUsedMB: heapUsedMB.toFixed(1),
+          marketsTracked: this.marketHistory.size,
+          marketsRemoved: marketsToRemove.length
+        }
+      });
+    }
   }
 
   /**

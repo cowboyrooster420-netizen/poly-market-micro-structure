@@ -1,6 +1,7 @@
 import { WorkerThreadManager, WorkerTask, WorkerResult } from '../performance/WorkerThreadManager';
 import { StatisticalModels, StatisticalConfig, StatisticalMetrics } from '../statistics/StatisticalModels';
 import { advancedLogger } from '../utils/AdvancedLogger';
+import { logger } from '../utils/logger';
 import { metricsCollector } from '../monitoring/MetricsCollector';
 import path from 'path';
 
@@ -36,11 +37,13 @@ export class StatisticalWorkerService {
     this.workerManager = new WorkerThreadManager({
       minWorkers: 2,
       maxWorkers: Math.min(4, require('os').cpus().length),
-      maxTaskQueueSize: 100,
+      queueMaxSize: 100,
+      scaleUpThreshold: 80,
+      scaleDownThreshold: 20,
       workerIdleTimeoutMs: 300000, // 5 minutes
       taskTimeoutMs: 30000, // 30 seconds
-      workerScript: this.workerScriptPath
-    });
+      autoScale: true
+    }, metricsCollector);
     
     // Fallback for when worker threads are not available or fail
     this.fallbackStatisticalModels = new StatisticalModels({
@@ -85,7 +88,7 @@ export class StatisticalWorkerService {
         timeout: 30000
       };
 
-      const result = await this.workerManager.executeTask(task);
+      const result = await this.workerManager.submitTask(task);
       
       if (!result.success) {
         throw new Error(result.error || 'Statistical calculation failed');
@@ -101,7 +104,7 @@ export class StatisticalWorkerService {
       advancedLogger.warn('Worker statistical calculation failed, using fallback', {
         component: 'statistical_worker_service',
         operation: 'calculate_statistics',
-        error: (error as Error).message
+        metadata: { error: (error as Error).message }
       });
       
       // Fallback to main thread calculation
@@ -140,7 +143,7 @@ export class StatisticalWorkerService {
         timeout: 20000
       };
 
-      const result = await this.workerManager.executeTask(task);
+      const result = await this.workerManager.submitTask(task);
       
       if (!result.success) {
         throw new Error(result.error || 'Correlation analysis failed');
@@ -162,7 +165,7 @@ export class StatisticalWorkerService {
       advancedLogger.warn('Worker correlation analysis failed, using fallback', {
         component: 'statistical_worker_service',
         operation: 'calculate_correlation',
-        error: (error as Error).message
+        metadata: { error: (error as Error).message }
       });
       
       // Fallback to main thread calculation
@@ -188,7 +191,7 @@ export class StatisticalWorkerService {
     try {
       // For small datasets, use main thread
       if (values.length < 50) {
-        const zScoreResult = this.fallbackStatisticalModels.calculateZScore(values[values.length - 1], values);
+        const zScoreResult = this.fallbackStatisticalModels.calculateZScore('default', 'volume', values[values.length - 1]);
         return {
           zScoreAnomalies: zScoreResult.isAnomaly ? [values[values.length - 1]] : [],
           isolationForestAnomalies: [],
@@ -205,7 +208,7 @@ export class StatisticalWorkerService {
         timeout: 45000
       };
 
-      const result = await this.workerManager.executeTask(task);
+      const result = await this.workerManager.submitTask(task);
       
       if (!result.success) {
         throw new Error(result.error || 'Anomaly detection failed');
@@ -221,11 +224,11 @@ export class StatisticalWorkerService {
       advancedLogger.warn('Worker anomaly detection failed, using fallback', {
         component: 'statistical_worker_service',
         operation: 'detect_anomalies',
-        error: (error as Error).message
+        metadata: { error: (error as Error).message }
       });
       
       // Fallback to simple anomaly detection
-      const zScoreResult = this.fallbackStatisticalModels.calculateZScore(values[values.length - 1], values);
+      const zScoreResult = this.fallbackStatisticalModels.calculateZScore('default', 'volume', values[values.length - 1]);
       return {
         zScoreAnomalies: zScoreResult.isAnomaly ? [values[values.length - 1]] : [],
         isolationForestAnomalies: [],
@@ -261,7 +264,7 @@ export class StatisticalWorkerService {
         timeout: 60000
       };
 
-      const result = await this.workerManager.executeTask(task);
+      const result = await this.workerManager.submitTask(task);
       
       if (!result.success) {
         throw new Error(result.error || 'Signal processing failed');
@@ -280,7 +283,7 @@ export class StatisticalWorkerService {
       advancedLogger.warn('Worker signal processing failed, using fallback', {
         component: 'statistical_worker_service',
         operation: 'process_signal',
-        error: (error as Error).message
+        metadata: { error: (error as Error).message }
       });
       
       // Fallback to passthrough
@@ -295,14 +298,17 @@ export class StatisticalWorkerService {
    * Get performance statistics for the worker pool
    */
   getPerformanceStats() {
-    return this.workerManager.getPerformanceStats();
+    return this.workerManager.getPoolStats();
   }
 
   /**
    * Scale the worker pool based on current load
+   * Note: Auto-scaling is handled automatically by WorkerThreadManager
    */
   async scaleWorkerPool() {
-    await this.workerManager.scaleWorkerPool();
+    // Auto-scaling is handled automatically by the WorkerThreadManager
+    // This method is kept for API compatibility
+    logger.debug('Worker pool scaling is handled automatically');
   }
 
   /**
@@ -322,8 +328,18 @@ export class StatisticalWorkerService {
    */
   async healthCheck(): Promise<{ healthy: boolean; details: any }> {
     try {
-      const stats = this.workerManager.getPerformanceStats();
-      const healthy = stats.activeWorkers > 0 && stats.errorRate < 0.1;
+      const stats = this.workerManager.getPoolStats();
+      
+      // Calculate error rate from worker stats
+      const totalTasks = stats.workerStats.reduce((sum, worker) => sum + worker.tasksCompleted, 0);
+      const totalErrors = stats.workerStats.reduce((sum, worker) => sum + worker.errorCount, 0);
+      const errorRate = totalTasks > 0 ? totalErrors / totalTasks : 0;
+      
+      // Calculate average processing time from worker stats
+      const totalProcessingTime = stats.workerStats.reduce((sum, worker) => sum + worker.totalProcessingTime, 0);
+      const averageProcessingTime = totalTasks > 0 ? totalProcessingTime / totalTasks : 0;
+      
+      const healthy = stats.activeWorkers > 0 && errorRate < 0.1;
       
       return {
         healthy,
@@ -331,8 +347,10 @@ export class StatisticalWorkerService {
           activeWorkers: stats.activeWorkers,
           totalWorkers: stats.totalWorkers,
           queueSize: stats.queueSize,
-          errorRate: stats.errorRate,
-          avgProcessingTime: stats.averageProcessingTime
+          pendingTasks: stats.pendingTasks,
+          utilizationRate: stats.utilizationRate,
+          errorRate,
+          averageProcessingTime
         }
       };
     } catch (error) {

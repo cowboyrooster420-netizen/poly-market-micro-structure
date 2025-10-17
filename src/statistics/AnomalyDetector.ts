@@ -541,11 +541,24 @@ export class AnomalyDetector {
   }
 
   private invertMatrix(matrix: number[][]): number[][] {
-    // Simple matrix inversion using Gaussian elimination
     const n = matrix.length;
-    const augmented = matrix.map((row, i) => [...row, ...Array(n).fill(0).map((_, j) => i === j ? 1 : 0)]);
     
-    // Forward elimination
+    // Add regularization to handle singular/near-singular matrices
+    const regularized = matrix.map((row, i) => 
+      row.map((val, j) => i === j ? val + 1e-6 : val) // Add small value to diagonal
+    );
+    
+    // Check condition number before inversion
+    const conditionNumber = this.estimateConditionNumber(regularized);
+    if (conditionNumber > 1e12) {
+      // Matrix is too ill-conditioned, use identity matrix as fallback
+      console.warn('Matrix is ill-conditioned, using identity matrix fallback');
+      return Array(n).fill(0).map((_, i) => Array(n).fill(0).map((_, j) => i === j ? 1 : 0));
+    }
+    
+    const augmented = regularized.map((row, i) => [...row, ...Array(n).fill(0).map((_, j) => i === j ? 1 : 0)]);
+    
+    // Forward elimination with partial pivoting
     for (let i = 0; i < n; i++) {
       // Find pivot
       let maxRow = i;
@@ -555,17 +568,22 @@ export class AnomalyDetector {
         }
       }
       
-      // Swap rows
-      [augmented[i], augmented[maxRow]] = [augmented[maxRow], augmented[i]];
-      
-      // Make diagonal element 1
-      const pivot = augmented[i][i];
-      if (Math.abs(pivot) < 1e-10) {
-        throw new Error('Matrix is singular');
+      // Swap rows if needed
+      if (maxRow !== i) {
+        [augmented[i], augmented[maxRow]] = [augmented[maxRow], augmented[i]];
       }
       
+      // Check for numerical stability
+      const pivot = augmented[i][i];
+      if (Math.abs(pivot) < 1e-12) {
+        // Use Tikhonov regularization for near-singular case
+        augmented[i][i] = 1e-6;
+      }
+      
+      // Scale row
+      const scaleFactor = 1 / augmented[i][i];
       for (let j = 0; j < 2 * n; j++) {
-        augmented[i][j] /= pivot;
+        augmented[i][j] *= scaleFactor;
       }
       
       // Eliminate column
@@ -581,6 +599,21 @@ export class AnomalyDetector {
     
     // Extract inverse matrix
     return augmented.map(row => row.slice(n));
+  }
+
+  /**
+   * Estimate condition number using simple method (ratio of max/min eigenvalue approximation)
+   */
+  private estimateConditionNumber(matrix: number[][]): number {
+    const n = matrix.length;
+    if (n === 1) return Math.abs(matrix[0][0]) > 1e-12 ? 1 : 1e15;
+    
+    // Simple approximation: use diagonal elements for condition number estimate
+    const diagonalElements = matrix.map((row, i) => Math.abs(row[i]));
+    const maxDiag = Math.max(...diagonalElements);
+    const minDiag = Math.min(...diagonalElements.filter(x => x > 1e-12));
+    
+    return minDiag > 0 ? maxDiag / minDiag : 1e15;
   }
 
   private quadraticForm(vector: number[], matrix: number[][]): number {

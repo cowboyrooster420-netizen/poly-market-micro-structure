@@ -406,7 +406,9 @@ export class EarlyBot {
       );
       
       // 🔍 DETECT COORDINATED CROSS-MARKET MOVEMENTS (Information Leak Detection)
-      await this.detectCrossMarketLeaks(topMarkets);
+      // DISABLED: Uses fake random data instead of real price data - generates false signals
+      // TODO: Reimplement with actual historical price data tracking
+      // await this.detectCrossMarketLeaks(topMarkets);
       
       // Process any detected signals
       for (const signal of signals) {

@@ -241,6 +241,9 @@ async function tuneDetectionSensitivity() {
         crossMarketCorrelation: {
           ...current.signals.crossMarketCorrelation,
           correlationThreshold: answers.correlationThreshold
+        },
+        activityDetection: {
+          ...current.signals.activityDetection
         }
       }
     });
