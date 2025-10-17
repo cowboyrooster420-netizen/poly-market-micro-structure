@@ -205,11 +205,18 @@ export class DataAccessLayer {
         }
       }
 
+      // Query compatible with both PostgreSQL and SQLite
       const result = await this.db.query(`
-        SELECT DISTINCT ON (outcome_index) outcome_index, price 
+        SELECT outcome_index, price 
         FROM market_prices 
         WHERE market_id = $1 
-        ORDER BY outcome_index, timestamp DESC
+          AND (market_id, outcome_index, timestamp) IN (
+            SELECT market_id, outcome_index, MAX(timestamp)
+            FROM market_prices
+            WHERE market_id = $1
+            GROUP BY market_id, outcome_index
+          )
+        ORDER BY outcome_index
       `, [marketId]);
 
       const prices = new Array(2).fill('0');
