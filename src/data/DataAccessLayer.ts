@@ -109,9 +109,9 @@ export class DataAccessLayer {
         volumeNum: parseFloat(row.volume) || 0,
         active: row.active,
         closed: row.closed,
-        endDate: row.end_date?.toISOString(),
-        createdAt: row.created_at?.toISOString(),
-        updatedAt: row.updated_at?.toISOString(),
+        endDate: row.end_date ? (row.end_date instanceof Date ? row.end_date.toISOString() : row.end_date.toString()) : undefined,
+        createdAt: row.created_at ? (row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at.toString()) : undefined,
+        updatedAt: row.updated_at ? (row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at.toString()) : undefined,
         metadata: row.metadata ? JSON.parse(row.metadata) : {}
       };
 
@@ -159,9 +159,9 @@ export class DataAccessLayer {
           volumeNum: parseFloat(row.volume) || 0,
           active: row.active,
           closed: row.closed,
-          endDate: row.end_date?.toISOString(),
-          createdAt: row.created_at?.toISOString(),
-          updatedAt: row.updated_at?.toISOString(),
+          endDate: row.end_date ? (row.end_date instanceof Date ? row.end_date.toISOString() : row.end_date.toString()) : undefined,
+          createdAt: row.created_at ? (row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at.toString()) : undefined,
+          updatedAt: row.updated_at ? (row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at.toString()) : undefined,
           metadata: row.metadata ? JSON.parse(row.metadata) : {}
         };
         markets.push(market);
