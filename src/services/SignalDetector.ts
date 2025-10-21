@@ -251,9 +251,9 @@ export class SignalDetector {
     // Only trigger if current volume change is significantly higher than recent average
     // and the market has meaningful baseline volume - MUST BE POSITIVE (increase only)
     if (currentVolumeChange > 0 && // Must be an actual increase
-        currentVolumeChange > avgVolumeChange * multiplierThreshold && 
+        currentVolumeChange > avgVolumeChange * multiplierThreshold &&
         currentVolumeChange > 25 && // At least 25% volume increase
-        market.volumeNum > this.config.minVolumeThreshold * 2) {
+        market.volumeNum > this.config.minVolumeThreshold) {
       
       logger.info(`🚨 VOLUME SPIKE: ${market.question?.substring(0, 50)} - ${currentVolumeChange.toFixed(1)}% volume increase!`);
       return {
