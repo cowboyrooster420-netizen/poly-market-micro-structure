@@ -541,53 +541,21 @@ export class SignalDetector {
    */
   private applyMultipleTestingCorrection(signals: EarlySignal[], numMarkets: number): EarlySignal[] {
     if (signals.length === 0) return signals;
-    
-    // Calculate the number of tests performed
-    const signalTypes = 4; // new_market, volume_spike, price_movement, unusual_activity
-    const totalTests = numMarkets * signalTypes;
-    
-    // Sort signals by confidence (descending)
-    const sortedSignals = [...signals].sort((a, b) => b.confidence - a.confidence);
-    
-    // Apply Benjamini-Hochberg FDR correction
-    const fdr = 0.05; // 5% false discovery rate
-    const correctedSignals: EarlySignal[] = [];
-    
-    for (let i = 0; i < sortedSignals.length; i++) {
-      const signal = sortedSignals[i];
-      const rank = i + 1;
-      
-      // Calculate p-value from confidence (1 - confidence)
-      const pValue = 1 - signal.confidence;
-      
-      // Benjamini-Hochberg critical value
-      const criticalValue = (rank / totalTests) * fdr;
-      
-      // If p-value <= critical value, signal is significant
-      if (pValue <= criticalValue) {
-        correctedSignals.push(signal);
-      } else {
-        // Since signals are sorted, all remaining signals will also fail
-        break;
-      }
+
+    // SIMPLIFIED: Only filter out very low confidence signals
+    // The statistical confidence calculations are already built into each signal
+    // Multiple testing correction was too aggressive (required 99.98%+ confidence)
+
+    // Filter signals by minimum confidence threshold
+    const minConfidence = 0.5; // Accept signals with 50%+ confidence
+    const filteredSignals = signals.filter(signal => signal.confidence >= minConfidence);
+
+    // Log filtering statistics
+    if (signals.length > filteredSignals.length) {
+      logger.debug(`Confidence filter: ${signals.length} raw signals → ${filteredSignals.length} signals (min confidence: ${minConfidence})`);
     }
-    
-    // Alternative: Use Bonferroni correction for more conservative approach
-    // Uncomment below for Bonferroni instead of FDR
-    /*
-    const bonferroniAlpha = 0.05 / totalTests;
-    const bonferroniSignals = signals.filter(signal => {
-      const pValue = 1 - signal.confidence;
-      return pValue <= bonferroniAlpha;
-    });
-    */
-    
-    // Log correction statistics
-    if (signals.length > correctedSignals.length) {
-      logger.debug(`Multiple testing correction (FDR): ${totalTests} tests, ${signals.length} raw signals, ${correctedSignals.length} corrected signals`);
-    }
-    
-    return correctedSignals;
+
+    return filteredSignals;
   }
 
   /**
