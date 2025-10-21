@@ -2,12 +2,12 @@
   "detection": {
     "signals": {
       "volumeSpike": {
-        "multiplier": 1.5,
+        "multiplier": 1.2,
         "windowMs": 180000,
         "minConfidence": 0.5
       },
       "priceMovement": {
-        "percentageThreshold": 3,
+        "percentageThreshold": 1.5,
         "timeWindowMs": 300000,
         "minVolume": 5000,
         "baselineExpectedChangePercent": 2
@@ -53,7 +53,7 @@
       }
     },
     "markets": {
-      "minVolumeThreshold": 40000,
+      "minVolumeThreshold": 15000,
       "maxMarketsToTrack": 100,
       "refreshIntervalMs": 30000,
       "inactivityTimeoutMs": 3600000
