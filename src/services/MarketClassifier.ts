@@ -135,23 +135,26 @@ export class MarketClassifier {
     const text = `${question} ${description}`;
 
     // Check for trend-based patterns (negative scoring)
+    let hasTrendPattern = false;
     for (const pattern of this.trendPatterns) {
       if (pattern.test(text)) {
         const match = text.match(pattern);
         reasons.push(`Trend pattern detected: "${match?.[0]}"`);
         score -= 0.4;
+        hasTrendPattern = true;
         break; // One match is enough to disqualify
       }
     }
 
     // Check for event-based keywords (positive scoring)
     let keywordMatches = 0;
+    const matchedKeywords: string[] = [];
     for (const keyword of this.eventKeywords) {
       if (keyword.test(text)) {
         keywordMatches++;
-        if (keywordMatches === 1) {
+        if (keywordMatches <= 2) {
           const match = text.match(keyword);
-          reasons.push(`Event keyword: "${match?.[0]}"`);
+          matchedKeywords.push(match?.[0] || '');
         }
       }
     }
@@ -159,6 +162,17 @@ export class MarketClassifier {
     if (keywordMatches > 0) {
       const keywordScore = Math.min(0.4, keywordMatches * 0.15);
       score += keywordScore;
+      reasons.push(`Event keywords: ${matchedKeywords.join(', ')}`);
+
+      // Bonus: If has event keyword + year reference + near-term end date, it's likely a legitimate event
+      // Example: "Who wins 2025 NYC election?" has "win" + "2025" + end date in 2025
+      if (/202[5-9]/.test(text) && !hasTrendPattern) {
+        const daysToResolution = this.getDaysToResolution(market);
+        if (daysToResolution !== null && daysToResolution <= 365) {
+          score += 0.1; // Bonus for year-referenced events with near-term resolution
+          reasons.push(`Event with year reference and near-term resolution`);
+        }
+      }
     }
 
     return score;

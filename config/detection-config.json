@@ -7,15 +7,15 @@
       "trendBasedPatterns": [
         "hit \\$\\d+.*202[5-9]",
         "reach \\$\\d+.*202[5-9]",
+        "above \\$\\d+.*202[5-9]",
+        "below \\$\\d+.*202[5-9]",
+        "price.*\\$\\d+.*202[5-9]",
         "hit \\$\\d+.*by end of",
         "reach \\$\\d+.*by end of",
         "will .* ever",
-        "in 202[5-9]",
         "by 203[0-9]",
         "by the end of 202[5-9]",
-        "before 202[6-9]",
-        "above \\$\\d+.*202[5-9]",
-        "below \\$\\d+.*202[5-9]"
+        "before 202[6-9]"
       ],
       "eventBasedKeywords": [
         "earnings",
@@ -43,14 +43,11 @@
         "resign"
       ],
       "excludeTags": [
-        "2025",
-        "2026",
-        "2027",
-        "2028",
-        "2029",
         "long-term",
         "price-prediction",
-        "crypto-price"
+        "crypto-price",
+        "yearly-forecast",
+        "multi-year"
       ],
       "includeTags": [
         "earnings",
