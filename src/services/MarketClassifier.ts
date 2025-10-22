@@ -72,20 +72,8 @@ export class MarketClassifier {
       resolutionDate: this.getResolutionDate(market)
     };
 
-    // Log classification details
-    if (!isEventBased) {
-      advancedLogger.info('Market filtered out (trend-based)', {
-        component: 'market_classifier',
-        operation: 'classify',
-        metadata: {
-          marketId: market.id.substring(0, 8),
-          question: market.question.substring(0, 60),
-          score,
-          reasons: reasons.slice(0, 3),
-          daysToResolution: classification.daysToResolution
-        }
-      });
-    }
+    // Individual market logging removed to prevent Railway log rate limit
+    // Summary statistics are logged in filterMarkets() method instead
 
     return classification;
   }
