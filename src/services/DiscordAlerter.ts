@@ -319,6 +319,12 @@ export class DiscordAlerter {
       },
     ];
 
+    // Add detailed reasoning section based on signal type
+    const reasoningField = this.buildReasoningSection(signal);
+    if (reasoningField) {
+      fields.push(reasoningField);
+    }
+
     // Add microstructure data if available
     if (signal.metadata?.microstructureData) {
       const data = signal.metadata.microstructureData;
@@ -356,6 +362,204 @@ export class DiscordAlerter {
     }
 
     return fields;
+  }
+
+  private buildReasoningSection(signal: EarlySignal): { name: string; value: string; inline?: boolean } | null {
+    const metadata = signal.metadata;
+    if (!metadata) return null;
+
+    let reasoning = '```\n━━━━━ DETECTION REASONING ━━━━━\n';
+
+    switch (signal.signalType) {
+      case 'volume_spike':
+        if (metadata.volumeChangePercent !== undefined && metadata.averageVolumeChange !== undefined) {
+          reasoning += `Current Volume Change: +${metadata.volumeChangePercent.toFixed(1)}%\n`;
+          reasoning += `Recent Average Change: +${metadata.averageVolumeChange.toFixed(1)}%\n`;
+          reasoning += `Spike Multiplier: ${metadata.spikeMultiplier?.toFixed(1)}x\n`;
+          reasoning += `Current Volume: $${metadata.currentVolume?.toFixed(0) || 'N/A'}\n`;
+          reasoning += `Threshold: Must exceed ${metadata.averageVolumeChange.toFixed(1)}% avg\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'price_movement':
+        if (metadata.maxChange !== undefined) {
+          reasoning += `Max Price Change: ${metadata.maxChange.toFixed(2)}%\n`;
+          if (metadata.immediateChange !== undefined) {
+            reasoning += `Immediate Change: ${metadata.immediateChange.toFixed(2)}%\n`;
+          }
+          if (metadata.cumulativeChange !== undefined) {
+            reasoning += `Cumulative Change: ${metadata.cumulativeChange.toFixed(2)}%\n`;
+          }
+          if (metadata.movementType) {
+            reasoning += `Movement Type: ${metadata.movementType}\n`;
+          }
+          reasoning += `Threshold: 1.5% minimum change\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'unusual_activity':
+        if (metadata.activityScore !== undefined) {
+          reasoning += `Activity Score: ${metadata.activityScore.toFixed(1)}/100\n`;
+          reasoning += `Threshold: 70+ for unusual activity\n`;
+          if (metadata.volumeChange !== undefined) {
+            reasoning += `Volume Change: ${metadata.volumeChange > 0 ? '+' : ''}${metadata.volumeChange.toFixed(1)}%\n`;
+          }
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'new_market':
+        if (metadata.timeSinceCreation !== undefined) {
+          const ageMinutes = Math.floor(metadata.timeSinceCreation / (60 * 1000));
+          reasoning += `Market Age: ${ageMinutes} minutes\n`;
+          reasoning += `Initial Volume: $${metadata.initialVolume?.toFixed(0) || 'N/A'}\n`;
+          reasoning += `Detection: New market with volume\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'orderbook_imbalance':
+        if (metadata.microstructureData) {
+          const data = metadata.microstructureData;
+          reasoning += `Current Imbalance: ${data.current?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Baseline: ${data.baseline?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Change: ${data.change > 0 ? '+' : ''}${data.change?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Threshold: 15% imbalance\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'spread_anomaly':
+        if (metadata.microstructureData) {
+          const data = metadata.microstructureData;
+          reasoning += `Current Spread: ${data.current?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Baseline Spread: ${data.baseline?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Change: ${data.change > 0 ? '+' : ''}${data.change?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Detection: Abnormal spread change\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'market_maker_withdrawal':
+        if (metadata.microstructureData) {
+          const data = metadata.microstructureData;
+          reasoning += `Current Depth: ${data.current?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Baseline Depth: ${data.baseline?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Depth Reduction: ${data.change?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Threshold: >15% depth reduction\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'momentum_breakout':
+        if (metadata.technicalIndicators) {
+          const ind = metadata.technicalIndicators;
+          if (ind.rsi) reasoning += `RSI: ${ind.rsi.toFixed(1)}\n`;
+          if (ind.momentum) reasoning += `Momentum: ${ind.momentum > 0 ? '+' : ''}${ind.momentum.toFixed(2)}%\n`;
+          if (ind.macd) reasoning += `MACD: ${ind.macd.toFixed(4)}\n`;
+          reasoning += `Detection: Strong momentum signal\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'liquidity_shift':
+        if (metadata.microstructureData) {
+          const data = metadata.microstructureData;
+          reasoning += `Current Liquidity: ${data.current?.toFixed(2) || 'N/A'}\n`;
+          reasoning += `Baseline Liquidity: ${data.baseline?.toFixed(2) || 'N/A'}\n`;
+          reasoning += `Change: ${data.change > 0 ? '+' : ''}${data.change?.toFixed(2) || 'N/A'}\n`;
+          reasoning += `Threshold: 20+ point change\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'aggressive_buyer':
+      case 'aggressive_seller':
+        if (metadata.microstructureData) {
+          const data = metadata.microstructureData;
+          const side = signal.signalType === 'aggressive_buyer' ? 'Buy' : 'Sell';
+          reasoning += `${side} Pressure: ${data.current?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Normal Flow: ${data.baseline?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Imbalance: ${data.change > 0 ? '+' : ''}${data.change?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Detection: Aggressive ${side.toLowerCase()}ing\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'front_running_detected':
+        if (metadata.microstructureData) {
+          const data = metadata.microstructureData;
+          reasoning += `Front-Run Score: ${data.current?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Baseline: ${data.baseline?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Detection: Potential front-running\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'coordinated_cross_market':
+        if (metadata.correlatedMarketQuestion) {
+          reasoning += `Correlated Market:\n${metadata.correlatedMarketQuestion}\n`;
+          if (metadata.correlationCoefficient) {
+            reasoning += `Correlation: ${metadata.correlationCoefficient.toFixed(3)}\n`;
+          }
+          if (metadata.correlationType) {
+            reasoning += `Type: ${metadata.correlationType}\n`;
+          }
+          reasoning += `Detection: Cross-market coordination\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      default:
+        // Generic metadata display for other signal types
+        if (metadata.microstructureData) {
+          const data = metadata.microstructureData;
+          reasoning += `Current: ${data.current?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Baseline: ${data.baseline?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Change: ${data.change > 0 ? '+' : ''}${data.change?.toFixed(4) || 'N/A'}\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        } else {
+          // No specific reasoning available
+          return null;
+        }
+        break;
+    }
+
+    reasoning += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n```';
+
+    return {
+      name: '🔍 Why This Signal?',
+      value: reasoning,
+      inline: false,
+    };
   }
 
   private atomicRateLimitCheck(marketId: string): boolean {
