@@ -249,13 +249,29 @@ export class DatabaseManager {
       );
 
       -- Indexes for performance
+      -- Market lookup indexes
+      CREATE INDEX IF NOT EXISTS idx_markets_active ON markets(active, volume DESC);
+      CREATE INDEX IF NOT EXISTS idx_markets_volume ON markets(volume DESC);
+      CREATE INDEX IF NOT EXISTS idx_markets_closed ON markets(closed);
+
+      -- Time-series data indexes
       CREATE INDEX IF NOT EXISTS idx_market_prices_market_time ON market_prices(market_id, timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_market_prices_time ON market_prices(timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_orderbook_market_time ON orderbook_snapshots(market_id, timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_orderbook_time ON orderbook_snapshots(timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_trade_ticks_market_time ON trade_ticks(market_id, timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_trade_ticks_time ON trade_ticks(timestamp DESC);
+
+      -- Signal indexes
       CREATE INDEX IF NOT EXISTS idx_signals_market_time ON signals(market_id, timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_signals_type ON signals(signal_type);
+      CREATE INDEX IF NOT EXISTS idx_signals_validated ON signals(validated, timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_signals_time ON signals(timestamp DESC);
+
+      -- Microstructure and analysis indexes
       CREATE INDEX IF NOT EXISTS idx_microstructure_market_time ON microstructure_metrics(market_id, timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_front_running_market_time ON front_running_scores(market_id, timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_front_running_score ON front_running_scores(score DESC, timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_backtest_results_date ON backtest_results(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_anomaly_scores_market_time ON anomaly_scores(market_id, timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_anomaly_scores_anomalous ON anomaly_scores(is_anomalous, timestamp DESC);
