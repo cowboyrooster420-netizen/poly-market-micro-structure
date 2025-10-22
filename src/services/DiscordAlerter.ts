@@ -356,7 +356,7 @@ export class DiscordAlerter {
     return fields;
   }
 
-  private buildReasoningSection(signal: EarlySignal): { name: string; value: string; inline?: boolean } | null {
+  private buildReasoningSection(signal: EarlySignal): { name: string; value: string; inline: boolean } | null {
     const metadata = signal.metadata;
     if (!metadata) return null;
 
