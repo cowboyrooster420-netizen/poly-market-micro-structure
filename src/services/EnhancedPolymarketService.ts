@@ -311,12 +311,15 @@ export class EnhancedPolymarketService extends PolymarketService {
 
   async getOrderbookHistory(marketId: string, hours: number = 24): Promise<OrderbookData[]> {
     try {
+      // OPTIMIZED: Added LIMIT to prevent unbounded result sets
+      // Limiting to 2,880 rows (24 hours at 1 snapshot per 30 seconds)
       const result = await this.dataLayer.db.query(`
         SELECT market_id, EXTRACT(EPOCH FROM timestamp) * 1000 as timestamp,
                bids, asks, spread, mid_price, best_bid, best_ask
-        FROM orderbook_snapshots 
+        FROM orderbook_snapshots
         WHERE market_id = $1 AND timestamp > (CURRENT_TIMESTAMP - INTERVAL '${hours} hours')
         ORDER BY timestamp DESC
+        LIMIT 2880
       `, [marketId]);
 
       return result.map((row: any) => ({

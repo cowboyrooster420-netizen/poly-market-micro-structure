@@ -116,18 +116,13 @@ export class WebSocketService {
     }
 
     // Polymarket Real-Time Data Service subscription format
+    // OPTIMIZED: Only subscribe to orderbook data ('book')
+    // - Removed 'price_change' (unused - just logs for debugging)
+    // - Removed 'last_trade_price' (tick handler no longer processes microstructure signals)
+    // - Kept 'book' (critical for microstructure leak detection)
+    // This reduces WebSocket subscriptions by 66% (3 → 1 per market)
     const subscribeMessage = {
       subscriptions: [
-        {
-          topic: 'clob_market',
-          type: 'price_change',
-          filters: [marketId]
-        },
-        {
-          topic: 'clob_market', 
-          type: 'last_trade_price',
-          filters: [marketId]
-        },
         {
           topic: 'clob_market',
           type: 'book',
@@ -146,18 +141,9 @@ export class WebSocketService {
     if (!this.isConnected) return;
 
     // Polymarket Real-Time Data Service unsubscription format
+    // Only unsubscribe from orderbook data (matching subscribe optimization)
     const unsubscribeMessage = {
       unsubscriptions: [
-        {
-          topic: 'clob_market',
-          type: 'price_change',
-          filters: [marketId]
-        },
-        {
-          topic: 'clob_market', 
-          type: 'last_trade_price',
-          filters: [marketId]
-        },
         {
           topic: 'clob_market',
           type: 'book',

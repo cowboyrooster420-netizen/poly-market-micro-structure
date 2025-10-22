@@ -240,11 +240,14 @@ export class DataAccessLayer {
 
   async getPriceHistory(marketId: string, hours: number = 24): Promise<HistoricalPrice[]> {
     try {
+      // OPTIMIZED: Added LIMIT to prevent unbounded result sets
+      // Limiting to 10,000 rows (enough for 24hrs at ~2.5 updates/sec per outcome)
       const result = await this.db.query(`
         SELECT market_id, EXTRACT(EPOCH FROM timestamp) * 1000 as timestamp, outcome_index, price, volume
-        FROM market_prices 
+        FROM market_prices
         WHERE market_id = $1 AND timestamp > (CURRENT_TIMESTAMP - INTERVAL '${hours} hours')
         ORDER BY timestamp DESC
+        LIMIT 10000
       `, [marketId]);
 
       return result.map((row: any) => ({
