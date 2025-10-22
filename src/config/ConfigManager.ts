@@ -415,6 +415,29 @@ export class ConfigManager {
             activityThreshold: 80
           }
         },
+        marketFiltering: {
+          enabled: true,
+          maxDaysToResolution: 90,
+          minDaysToResolution: 1,
+          trendBasedPatterns: [
+            'hit \\$\\d+.*202[5-9]',
+            'reach \\$\\d+.*202[5-9]',
+            'price.*\\$\\d+.*202[5-9]'
+          ],
+          eventBasedKeywords: [
+            'earnings',
+            'beat earnings',
+            'win election',
+            'primary',
+            'indicted',
+            'win game',
+            'this week'
+          ],
+          excludeTags: ['long-term', 'price-prediction', 'crypto-price'],
+          includeTags: ['earnings', 'elections', 'sports', 'legal'],
+          requireEventDate: true,
+          scoreThreshold: 0.6
+        },
         microstructure: {
           orderbookImbalance: {
             threshold: 0.3,

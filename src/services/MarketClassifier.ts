@@ -74,7 +74,7 @@ export class MarketClassifier {
 
     // Log classification details
     if (!isEventBased) {
-      advancedLogger.debug('Market filtered out (trend-based)', {
+      advancedLogger.info('Market filtered out (trend-based)', {
         component: 'market_classifier',
         operation: 'classify',
         metadata: {
@@ -96,7 +96,7 @@ export class MarketClassifier {
   private calculateTimeScore(market: Market, reasons: string[]): number {
     const daysToResolution = this.getDaysToResolution(market);
 
-    if (daysToResolution === null) {
+    if (daysToResolution === undefined) {
       // No end date - likely trend-based
       reasons.push('No resolution date specified');
       return -0.3;
@@ -168,7 +168,7 @@ export class MarketClassifier {
       // Example: "Who wins 2025 NYC election?" has "win" + "2025" + end date in 2025
       if (/202[5-9]/.test(text) && !hasTrendPattern) {
         const daysToResolution = this.getDaysToResolution(market);
-        if (daysToResolution !== null && daysToResolution <= 365) {
+        if (daysToResolution !== undefined && daysToResolution <= 365) {
           score += 0.1; // Bonus for year-referenced events with near-term resolution
           reasons.push(`Event with year reference and near-term resolution`);
         }
@@ -265,9 +265,9 @@ export class MarketClassifier {
   /**
    * Get days until market resolution
    */
-  private getDaysToResolution(market: Market): number | null {
+  private getDaysToResolution(market: Market): number | undefined {
     const resolutionDate = this.getResolutionDate(market);
-    if (!resolutionDate) return null;
+    if (!resolutionDate) return undefined;
 
     const now = new Date();
     const diffMs = resolutionDate.getTime() - now.getTime();
@@ -279,15 +279,15 @@ export class MarketClassifier {
   /**
    * Get market resolution date
    */
-  private getResolutionDate(market: Market): Date | null {
-    if (!market.endDate) return null;
+  private getResolutionDate(market: Market): Date | undefined {
+    if (!market.endDate) return undefined;
 
     try {
       const date = new Date(market.endDate);
-      if (isNaN(date.getTime())) return null;
+      if (isNaN(date.getTime())) return undefined;
       return date;
     } catch {
-      return null;
+      return undefined;
     }
   }
 

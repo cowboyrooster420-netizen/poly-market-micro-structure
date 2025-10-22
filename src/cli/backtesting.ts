@@ -32,7 +32,6 @@ export async function runBacktestingCLI(): Promise<void> {
         orderbookImbalanceThreshold: 0.3,
         spreadAnomalyThreshold: 2.0,
         liquidityShiftThreshold: 20,
-        momentumThreshold: 5,
         tickBufferSize: 1000,
       },
       discord: {
@@ -172,7 +171,6 @@ export async function runCustomBacktest(
         orderbookImbalanceThreshold: 0.3,
         spreadAnomalyThreshold: 2.0,
         liquidityShiftThreshold: 20,
-        momentumThreshold: 5,
         tickBufferSize: 1000,
       },
       discord: {

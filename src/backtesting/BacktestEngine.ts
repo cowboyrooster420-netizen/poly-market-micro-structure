@@ -227,11 +227,11 @@ export class BacktestEngine {
       // Generate signal if significant momentum detected
       if (Math.abs(momentum) > 0.05) { // 5% threshold
         const confidence = Math.min(Math.abs(momentum) * 10, 1.0);
-        
+
         signals.push({
           marketId: market.id,
           market: market,
-          signalType: momentum > 0 ? 'bullish_momentum' : 'bearish_momentum',
+          signalType: 'price_movement', // Changed from bullish_momentum/bearish_momentum
           confidence: confidence,
           timestamp: priceHistory[i].timestamp,
           metadata: {
