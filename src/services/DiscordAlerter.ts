@@ -50,7 +50,6 @@ export class DiscordAlerter {
     orderbook_imbalance: '⚖️',
     spread_anomaly: '📐',
     market_maker_withdrawal: '🏃‍♂️',
-    momentum_breakout: '🚀',
     liquidity_shift: '💧',
     volume_spike: '📈',
     price_movement: '📊',
@@ -203,9 +202,22 @@ export class DiscordAlerter {
     // Add market link if available
     if (signal.marketId) {
       embed.fields = embed.fields || [];
+
+      // Try to use the slug for a clean URL, fallback to condition_id
+      const slug = signal.market?.metadata?.slug;
+      let marketUrl: string;
+
+      if (slug) {
+        // Use slug for clean, working URL
+        marketUrl = `https://polymarket.com/event/${slug}`;
+      } else {
+        // Fallback: use condition_id (may not work but better than nothing)
+        marketUrl = `https://polymarket.com/event/${signal.marketId}`;
+      }
+
       embed.fields.push({
         name: '🔗 View Market',
-        value: `[Open on Polymarket](https://polymarket.com/market/${signal.marketId})`,
+        value: `[Open on Polymarket](${marketUrl})`,
         inline: false,
       });
     }
@@ -270,17 +282,16 @@ export class DiscordAlerter {
       case 'market_maker_withdrawal':
       case 'liquidity_shift':
         return 'liquidity';
-      
-      case 'momentum_breakout':
+
       case 'price_movement':
         return severity === 'high' ? 'flash_move' : 'price_action';
-      
+
       case 'new_market':
         return 'new_opportunity';
-      
+
       case 'volume_spike':
         return severity === 'high' ? 'urgent' : 'price_action';
-      
+
       default:
         return 'price_action';
     }
@@ -340,25 +351,6 @@ export class DiscordAlerter {
           inline: true,
         }
       );
-    }
-
-    // Add technical indicators if available
-    if (signal.metadata?.technicalIndicators) {
-      const indicators = signal.metadata.technicalIndicators;
-      if (indicators.rsi) {
-        fields.push({
-          name: 'RSI',
-          value: indicators.rsi.toFixed(1),
-          inline: true,
-        });
-      }
-      if (indicators.momentum) {
-        fields.push({
-          name: 'Momentum',
-          value: `${indicators.momentum > 0 ? '+' : ''}${indicators.momentum.toFixed(2)}%`,
-          inline: true,
-        });
-      }
     }
 
     return fields;
@@ -461,19 +453,6 @@ export class DiscordAlerter {
           reasoning += `Baseline Depth: ${data.baseline?.toFixed(4) || 'N/A'}\n`;
           reasoning += `Depth Reduction: ${data.change?.toFixed(4) || 'N/A'}\n`;
           reasoning += `Threshold: >15% depth reduction\n`;
-          if (signal.confidence) {
-            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
-          }
-        }
-        break;
-
-      case 'momentum_breakout':
-        if (metadata.technicalIndicators) {
-          const ind = metadata.technicalIndicators;
-          if (ind.rsi) reasoning += `RSI: ${ind.rsi.toFixed(1)}\n`;
-          if (ind.momentum) reasoning += `Momentum: ${ind.momentum > 0 ? '+' : ''}${ind.momentum.toFixed(2)}%\n`;
-          if (ind.macd) reasoning += `MACD: ${ind.macd.toFixed(4)}\n`;
-          reasoning += `Detection: Strong momentum signal\n`;
           if (signal.confidence) {
             reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
           }

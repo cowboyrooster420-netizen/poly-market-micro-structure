@@ -1,7 +1,10 @@
 import { BotConfig, Market, OrderbookData, TickData } from '../types';
 import { PolymarketService } from './PolymarketService';
+import { MarketClassifier } from './MarketClassifier';
 import { DataAccessLayer } from '../data/DataAccessLayer';
+import { configManager } from '../config/ConfigManager';
 import { logger } from '../utils/logger';
+import { advancedLogger } from '../utils/AdvancedLogger';
 import { polymarketRateLimiter } from '../utils/RateLimiter';
 
 interface MarketSyncStats {
@@ -10,16 +13,23 @@ interface MarketSyncStats {
   updatedMarkets: number;
   errors: number;
   lastSyncTime: number;
+  filteredMarkets?: number;
+  eventBasedMarkets?: number;
+  trendBasedMarkets?: number;
 }
 
 export class EnhancedPolymarketService extends PolymarketService {
   private dataLayer: DataAccessLayer;
+  private marketClassifier: MarketClassifier;
   private syncStats: MarketSyncStats = {
     marketsProcessed: 0,
     newMarkets: 0,
     updatedMarkets: 0,
     errors: 0,
-    lastSyncTime: 0
+    lastSyncTime: 0,
+    filteredMarkets: 0,
+    eventBasedMarkets: 0,
+    trendBasedMarkets: 0
   };
   private syncInterval?: NodeJS.Timeout;
   private readonly SYNC_INTERVAL_MS = 60000; // 1 minute
@@ -29,6 +39,15 @@ export class EnhancedPolymarketService extends PolymarketService {
   constructor(config: BotConfig, dataLayer: DataAccessLayer) {
     super(config);
     this.dataLayer = dataLayer;
+
+    // Initialize market classifier with config
+    const filterConfig = configManager.getConfig().detection.marketFiltering;
+    this.marketClassifier = new MarketClassifier(filterConfig);
+
+    // Subscribe to config changes
+    configManager.onConfigChange('enhanced_polymarket_service', (newConfig) => {
+      this.marketClassifier.updateConfig(newConfig.detection.marketFiltering);
+    });
   }
 
   async initialize(): Promise<void> {
@@ -147,23 +166,47 @@ export class EnhancedPolymarketService extends PolymarketService {
     await Promise.allSettled(promises);
   }
 
-  // Enhanced market retrieval with database fallback
+  // Enhanced market retrieval with database fallback and filtering
   async getActiveMarkets(): Promise<Market[]> {
     try {
       // Try to get from API first
       const apiMarkets = await super.getActiveMarkets();
-      
+
       if (apiMarkets.length > 0) {
-        return apiMarkets;
+        // Apply market filtering to focus on event-based markets
+        const beforeFilterCount = apiMarkets.length;
+        const filteredMarkets = this.marketClassifier.filterMarkets(apiMarkets);
+        const afterFilterCount = filteredMarkets.length;
+
+        // Update stats
+        this.syncStats.filteredMarkets = beforeFilterCount - afterFilterCount;
+        this.syncStats.eventBasedMarkets = afterFilterCount;
+        this.syncStats.trendBasedMarkets = beforeFilterCount - afterFilterCount;
+
+        // Log filtering summary
+        advancedLogger.info('Market filtering applied', {
+          component: 'enhanced_polymarket_service',
+          operation: 'get_active_markets',
+          metadata: {
+            totalMarkets: beforeFilterCount,
+            eventBasedMarkets: afterFilterCount,
+            filteredOut: beforeFilterCount - afterFilterCount,
+            filterRate: `${(((beforeFilterCount - afterFilterCount) / beforeFilterCount) * 100).toFixed(1)}%`
+          }
+        });
+
+        return filteredMarkets;
       }
-      
+
       // Fallback to database if API fails
       logger.warn('API returned no markets, falling back to database');
-      return await this.dataLayer.getActiveMarkets();
-      
+      const dbMarkets = await this.dataLayer.getActiveMarkets();
+      return this.marketClassifier.filterMarkets(dbMarkets);
+
     } catch (error) {
       logger.error('Error getting active markets from API, falling back to database:', error);
-      return await this.dataLayer.getActiveMarkets();
+      const dbMarkets = await this.dataLayer.getActiveMarkets();
+      return this.marketClassifier.filterMarkets(dbMarkets);
     }
   }
 

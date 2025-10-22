@@ -1,5 +1,66 @@
 {
   "detection": {
+    "marketFiltering": {
+      "enabled": true,
+      "maxDaysToResolution": 90,
+      "minDaysToResolution": 1,
+      "trendBasedPatterns": [
+        "hit \\$\\d+.*202[5-9]",
+        "reach \\$\\d+.*202[5-9]",
+        "above \\$\\d+.*202[5-9]",
+        "below \\$\\d+.*202[5-9]",
+        "price.*\\$\\d+.*202[5-9]",
+        "hit \\$\\d+.*by end of",
+        "reach \\$\\d+.*by end of",
+        "will .* ever",
+        "by 203[0-9]",
+        "by the end of 202[5-9]",
+        "before 202[6-9]"
+      ],
+      "eventBasedKeywords": [
+        "earnings",
+        "beat earnings",
+        "miss earnings",
+        "Q[1-4] earnings",
+        "win election",
+        "primary",
+        "caucus",
+        "indicted",
+        "convicted",
+        "sentenced",
+        "arrested",
+        "win game",
+        "win championship",
+        "playoff",
+        "pass.*bill",
+        "veto",
+        "announce this",
+        "release this",
+        "this week",
+        "this month",
+        "next meeting",
+        "impeach",
+        "resign"
+      ],
+      "excludeTags": [
+        "long-term",
+        "price-prediction",
+        "crypto-price",
+        "yearly-forecast",
+        "multi-year"
+      ],
+      "includeTags": [
+        "earnings",
+        "elections",
+        "sports",
+        "politics",
+        "legal",
+        "news",
+        "current-events"
+      ],
+      "requireEventDate": true,
+      "scoreThreshold": 0.6
+    },
     "signals": {
       "volumeSpike": {
         "multiplier": 1.2,

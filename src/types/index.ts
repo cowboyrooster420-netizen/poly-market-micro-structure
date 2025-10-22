@@ -22,7 +22,7 @@ export interface Market {
 export interface EarlySignal {
   marketId: string;
   market: Market;
-  signalType: 'new_market' | 'volume_spike' | 'price_movement' | 'unusual_activity' | 'orderbook_imbalance' | 'spread_anomaly' | 'market_maker_withdrawal' | 'momentum_breakout' | 'liquidity_shift' | 'aggressive_buyer' | 'aggressive_seller' | 'iceberg_detected' | 'wall_break' | 'liquidity_vacuum' | 'smart_money' | 'stop_hunt' | 'information_leak' | 'coordinated_cross_market' | 'off_hours_anomaly' | 'stealth_accumulation' | 'micro_price_drift' | 'bullish_momentum' | 'bearish_momentum' | 'front_running_detected';
+  signalType: 'new_market' | 'volume_spike' | 'price_movement' | 'unusual_activity' | 'orderbook_imbalance' | 'spread_anomaly' | 'market_maker_withdrawal' | 'liquidity_shift' | 'aggressive_buyer' | 'aggressive_seller' | 'iceberg_detected' | 'wall_break' | 'liquidity_vacuum' | 'smart_money' | 'stop_hunt' | 'information_leak' | 'coordinated_cross_market' | 'off_hours_anomaly' | 'stealth_accumulation' | 'micro_price_drift' | 'front_running_detected';
   confidence: number;
   timestamp: number;
   metadata?: Record<string, any>;
@@ -41,7 +41,6 @@ export interface BotConfig {
     orderbookImbalanceThreshold: number;
     spreadAnomalyThreshold: number;
     liquidityShiftThreshold: number;
-    momentumThreshold: number;
     tickBufferSize: number;
   };
   discord: {
@@ -98,22 +97,8 @@ export interface OrderbookMetrics {
   liquidityScore: number;
 }
 
-export interface TechnicalIndicators {
-  marketId: string;
-  timestamp: number;
-  rsi: number;
-  macd: {
-    line: number;
-    signal: number;
-    histogram: number;
-  };
-  momentum: number;
-  vwap: number;
-  priceDeviation: number;
-}
-
 export interface MicrostructureSignal {
-  type: 'orderbook_imbalance' | 'spread_anomaly' | 'market_maker_withdrawal' | 'momentum_breakout' | 'liquidity_shift';
+  type: 'orderbook_imbalance' | 'spread_anomaly' | 'market_maker_withdrawal' | 'liquidity_shift';
   marketId: string;
   timestamp: number;
   confidence: number;
@@ -218,21 +203,45 @@ export interface CrossMarketCorrelation {
 export interface AnomalyScore {
   marketId: string;
   timestamp: number;
-  
+
   // Individual feature scores
   volumeAnomaly: number;
   depthAnomaly: number;
   spreadAnomaly: number;
   imbalanceAnomaly: number;
   priceAnomaly: number;
-  
+
   // Combined anomaly scores
   mahalanobisDistance: number;
   isolationForestScore: number;
   combinedScore: number;
-  
+
   // Classification
   isAnomalous: boolean;
   anomalyType: string[];
   confidence: number;
+}
+
+export interface MarketClassification {
+  marketId: string;
+  isEventBased: boolean;
+  isTrendBased: boolean;
+  score: number;
+  confidence: number;
+  reasons: string[];
+  marketType?: 'earnings' | 'election' | 'sports' | 'legal' | 'political' | 'news' | 'crypto-price' | 'general';
+  daysToResolution?: number;
+  resolutionDate?: Date;
+}
+
+export interface MarketFilterConfig {
+  enabled: boolean;
+  maxDaysToResolution: number;
+  minDaysToResolution: number;
+  trendBasedPatterns: string[];
+  eventBasedKeywords: string[];
+  excludeTags: string[];
+  includeTags: string[];
+  requireEventDate: boolean;
+  scoreThreshold: number;
 }

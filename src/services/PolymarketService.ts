@@ -173,6 +173,8 @@ export class PolymarketService {
         metadata: {
           assetIds: assetIds,
           conditionId: data.condition_id,
+          slug: data.slug || data.market_slug,
+          clobTokenIds: data.clobTokenIds,
           rawTokensData: process.env.LOG_LEVEL === 'debug' ? data.tokens : undefined,
         }
       };

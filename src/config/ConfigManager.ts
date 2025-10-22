@@ -4,6 +4,19 @@ import { logger } from '../utils/logger';
 import { advancedLogger } from '../utils/AdvancedLogger';
 
 export interface DetectionThresholds {
+  // Market Filtering Configuration
+  marketFiltering: {
+    enabled: boolean;
+    maxDaysToResolution: number;
+    minDaysToResolution: number;
+    trendBasedPatterns: string[];
+    eventBasedKeywords: string[];
+    excludeTags: string[];
+    includeTags: string[];
+    requireEventDate: boolean;
+    scoreThreshold: number;
+  };
+
   // Signal Detection Thresholds
   signals: {
     volumeSpike: {
