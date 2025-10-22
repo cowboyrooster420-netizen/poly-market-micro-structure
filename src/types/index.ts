@@ -218,21 +218,45 @@ export interface CrossMarketCorrelation {
 export interface AnomalyScore {
   marketId: string;
   timestamp: number;
-  
+
   // Individual feature scores
   volumeAnomaly: number;
   depthAnomaly: number;
   spreadAnomaly: number;
   imbalanceAnomaly: number;
   priceAnomaly: number;
-  
+
   // Combined anomaly scores
   mahalanobisDistance: number;
   isolationForestScore: number;
   combinedScore: number;
-  
+
   // Classification
   isAnomalous: boolean;
   anomalyType: string[];
   confidence: number;
+}
+
+export interface MarketClassification {
+  marketId: string;
+  isEventBased: boolean;
+  isTrendBased: boolean;
+  score: number;
+  confidence: number;
+  reasons: string[];
+  marketType?: 'earnings' | 'election' | 'sports' | 'legal' | 'political' | 'news' | 'crypto-price' | 'general';
+  daysToResolution?: number;
+  resolutionDate?: Date;
+}
+
+export interface MarketFilterConfig {
+  enabled: boolean;
+  maxDaysToResolution: number;
+  minDaysToResolution: number;
+  trendBasedPatterns: string[];
+  eventBasedKeywords: string[];
+  excludeTags: string[];
+  includeTags: string[];
+  requireEventDate: boolean;
+  scoreThreshold: number;
 }
