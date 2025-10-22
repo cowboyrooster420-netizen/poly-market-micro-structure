@@ -1,17 +1,15 @@
-import { 
-  BotConfig, 
-  EarlySignal, 
-  TickData, 
-  OrderbookData, 
+import {
+  BotConfig,
+  EarlySignal,
+  TickData,
+  OrderbookData,
   Market,
   MicrostructureSignal,
-  TechnicalIndicators,
   OrderbookMetrics,
-  EnhancedMicrostructureMetrics 
+  EnhancedMicrostructureMetrics
 } from '../types';
 import { SignalDetector } from './SignalDetector';
 import { OrderbookAnalyzer } from './OrderbookAnalyzer';
-import { TechnicalIndicatorCalculator } from './TechnicalIndicators';
 import { WebSocketService } from './WebSocketService';
 import { OrderFlowAnalyzer } from './OrderFlowAnalyzer';
 import { EnhancedMicrostructureAnalyzer } from './EnhancedMicrostructureAnalyzer';
@@ -22,7 +20,6 @@ export class MicrostructureDetector {
   private config: BotConfig;
   private signalDetector: SignalDetector;
   private orderbookAnalyzer: OrderbookAnalyzer;
-  private technicalIndicators: TechnicalIndicatorCalculator;
   private orderFlowAnalyzer: OrderFlowAnalyzer;
   private enhancedAnalyzer: EnhancedMicrostructureAnalyzer;
   private frontRunEngine: FrontRunningHeuristicEngine;
@@ -43,7 +40,6 @@ export class MicrostructureDetector {
     this.config = config;
     this.signalDetector = new SignalDetector(config);
     this.orderbookAnalyzer = new OrderbookAnalyzer(config);
-    this.technicalIndicators = new TechnicalIndicatorCalculator(config);
     this.orderFlowAnalyzer = new OrderFlowAnalyzer(config);
     this.enhancedAnalyzer = new EnhancedMicrostructureAnalyzer(config);
     this.frontRunEngine = new FrontRunningHeuristicEngine(config);
@@ -100,7 +96,6 @@ export class MicrostructureDetector {
     this.trackedMarkets.clear();
     
     // Clean up ring buffers to prevent memory leaks
-    this.technicalIndicators.dispose();
     this.orderbookAnalyzer.dispose();
     this.orderFlowAnalyzer.dispose();
     this.enhancedAnalyzer.cleanupStaleMarkets();
@@ -153,10 +148,6 @@ export class MicrostructureDetector {
   }
 
   // Getters for market data
-  getMarketIndicators(marketId: string): TechnicalIndicators | null {
-    return this.technicalIndicators.getMarketIndicators(marketId);
-  }
-
   getMarketOrderbookMetrics(marketId: string): OrderbookMetrics | null {
     return this.orderbookAnalyzer.getMarketMetrics(marketId);
   }
@@ -512,15 +503,13 @@ export class MicrostructureDetector {
   }
 
   private enrichSignal(signal: EarlySignal): EarlySignal {
-    // Add current market indicators for context
-    const indicators = this.technicalIndicators.getMarketIndicators(signal.marketId);
+    // Add current orderbook metrics for context
     const orderbookMetrics = this.orderbookAnalyzer.getMarketMetrics(signal.marketId);
 
     return {
       ...signal,
       metadata: {
         ...signal.metadata,
-        technicalIndicators: indicators,
         orderbookMetrics: orderbookMetrics,
         detectionTimestamp: Date.now(),
         enrichmentVersion: '1.0',
@@ -554,7 +543,6 @@ export class MicrostructureDetector {
 
         // Cleanup stale market data every 5 minutes (with error handling)
         try {
-          this.technicalIndicators.cleanupStaleMarkets();
           this.orderbookAnalyzer.cleanupStaleMarkets();
           this.enhancedAnalyzer.cleanupStaleMarkets();
           this.frontRunEngine.cleanup();

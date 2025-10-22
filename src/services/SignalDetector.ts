@@ -1,6 +1,5 @@
 import { BotConfig, EarlySignal, Market, MarketMetrics, MicrostructureSignal, TickData, OrderbookData } from '../types';
 import { OrderbookAnalyzer } from './OrderbookAnalyzer';
-import { TechnicalIndicatorCalculator } from './TechnicalIndicators';
 import { statisticalWorkerService } from './StatisticalWorkerService';
 import { configManager } from '../config/ConfigManager';
 import { logger } from '../utils/logger';
@@ -11,7 +10,6 @@ export class SignalDetector {
   private marketHistory: Map<string, MarketMetrics[]> = new Map();
   private lastScanTime = 0;
   private orderbookAnalyzer: OrderbookAnalyzer;
-  private technicalIndicators: TechnicalIndicatorCalculator;
   private recentSignals: Map<string, { signalType: string; timestamp: number; }[]> = new Map();
   
   // Statistical activity score storage for percentile-based scoring
@@ -24,8 +22,7 @@ export class SignalDetector {
   constructor(config: BotConfig) {
     this.config = config;
     this.orderbookAnalyzer = new OrderbookAnalyzer(config);
-    this.technicalIndicators = new TechnicalIndicatorCalculator(config);
-    
+
     // Subscribe to configuration changes
     configManager.onConfigChange('signal_detector', this.onConfigurationChange.bind(this));
   }
@@ -129,13 +126,9 @@ export class SignalDetector {
   // New methods for real-time microstructure analysis
   detectMicrostructureSignals(tick: TickData): EarlySignal[] {
     const signals: EarlySignal[] = [];
-    
-    // Calculate technical indicators
-    const indicators = this.technicalIndicators.calculateIndicators(tick.marketId, tick);
-    if (indicators) {
-      const momentumSignals = this.technicalIndicators.detectMomentumSignals(indicators);
-      signals.push(...this.convertMicrostructureToEarlySignals(momentumSignals));
-    }
+
+    // No longer using technical indicators (RSI/MACD removed)
+    // Microstructure signals are now handled by OrderbookAnalyzer
 
     return signals;
   }
