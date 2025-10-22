@@ -41,6 +41,7 @@ export interface MetricThreshold {
   warning: number;
   critical: number;
   unit: string;
+  inverted?: boolean; // For metrics where lower values are worse (e.g., health score)
 }
 
 export class MetricsCollector {
@@ -61,7 +62,7 @@ export class MetricsCollector {
     { metric: 'eventLoop.lag', warning: 100, critical: 500, unit: 'ms' },
     { metric: 'application.errorRate', warning: 5, critical: 10, unit: 'errors/min' },
     { metric: 'application.responseTime', warning: 2000, critical: 5000, unit: 'ms' },
-    { metric: 'application.healthScore', warning: 70, critical: 50, unit: 'score' }
+    { metric: 'application.healthScore', warning: 70, critical: 50, unit: 'score', inverted: true }
   ];
 
   constructor() {
@@ -324,22 +325,40 @@ export class MetricsCollector {
       const value = this.getNestedValue(current, threshold.metric);
       if (value !== undefined) {
         let status: 'ok' | 'warning' | 'critical' = 'ok';
-        let thresholdText = `< ${threshold.warning}${threshold.unit}`;
-        
-        if (value >= threshold.critical) {
+        let thresholdText: string;
+        let isCritical = false;
+        let isWarning = false;
+
+        if (threshold.inverted) {
+          // For inverted metrics (lower is worse)
+          thresholdText = `> ${threshold.warning}${threshold.unit}`;
+          isCritical = value <= threshold.critical;
+          isWarning = value <= threshold.warning && !isCritical;
+        } else {
+          // For normal metrics (higher is worse)
+          thresholdText = `< ${threshold.warning}${threshold.unit}`;
+          isCritical = value >= threshold.critical;
+          isWarning = value >= threshold.warning && !isCritical;
+        }
+
+        if (isCritical) {
           status = 'critical';
-          thresholdText = `>= ${threshold.critical}${threshold.unit}`;
+          thresholdText = threshold.inverted
+            ? `<= ${threshold.critical}${threshold.unit}`
+            : `>= ${threshold.critical}${threshold.unit}`;
           overallStatus = 'critical';
           issues.push(`Critical: ${threshold.metric} is ${value}${threshold.unit}`);
           recommendations.push(`Immediate attention required for ${threshold.metric}`);
-        } else if (value >= threshold.warning) {
+        } else if (isWarning) {
           status = 'warning';
-          thresholdText = `>= ${threshold.warning}${threshold.unit}`;
+          thresholdText = threshold.inverted
+            ? `<= ${threshold.warning}${threshold.unit}`
+            : `>= ${threshold.warning}${threshold.unit}`;
           if (overallStatus !== 'critical') overallStatus = 'warning';
           issues.push(`Warning: ${threshold.metric} is ${value}${threshold.unit}`);
           recommendations.push(`Monitor ${threshold.metric} closely`);
         }
-        
+
         keyMetrics[threshold.metric] = {
           value,
           threshold: thresholdText,
@@ -452,9 +471,22 @@ export class MetricsCollector {
     for (const threshold of this.thresholds) {
       const value = this.getNestedValue(metrics, threshold.metric);
       if (value !== undefined) {
-        if (value >= threshold.critical) {
+        let isCritical = false;
+        let isWarning = false;
+
+        if (threshold.inverted) {
+          // For inverted metrics (lower is worse), check if value is below thresholds
+          isCritical = value <= threshold.critical;
+          isWarning = value <= threshold.warning && !isCritical;
+        } else {
+          // For normal metrics (higher is worse), check if value is above thresholds
+          isCritical = value >= threshold.critical;
+          isWarning = value >= threshold.warning && !isCritical;
+        }
+
+        if (isCritical) {
           advancedLogger.critical(
-            `Critical threshold exceeded: ${threshold.metric} = ${value}${threshold.unit}`,
+            `Critical threshold ${threshold.inverted ? 'below' : 'exceeded'}: ${threshold.metric} = ${value}${threshold.unit}`,
             undefined,
             {
               component: 'metrics_collector',
@@ -462,9 +494,9 @@ export class MetricsCollector {
               metadata: { threshold, value }
             }
           );
-        } else if (value >= threshold.warning) {
+        } else if (isWarning) {
           advancedLogger.warn(
-            `Warning threshold exceeded: ${threshold.metric} = ${value}${threshold.unit}`,
+            `Warning threshold ${threshold.inverted ? 'below' : 'exceeded'}: ${threshold.metric} = ${value}${threshold.unit}`,
             {
               component: 'metrics_collector',
               operation: 'threshold_check',
