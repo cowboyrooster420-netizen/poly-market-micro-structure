@@ -185,15 +185,12 @@ export class MicrostructureDetector {
     if (!this.isRunning || !this.trackedMarkets.has(tick.marketId)) return;
 
     try {
-      // Detect microstructure signals from tick data
-      const signals = this.signalDetector.detectMicrostructureSignals(tick);
-      
-      for (const signal of signals) {
-        this.processSignal(signal);
-      }
+      // Tick data is primarily used for trade flow analysis
+      // Microstructure signals are detected from orderbook data via handleOrderbook()
+      // This handler exists to capture trade events for future analysis
 
       // Update performance counters
-      this.updateSignalCounts('tick', signals.length);
+      this.updateSignalCounts('tick', 0);
 
     } catch (error) {
       logger.error('Error processing tick data:', error);

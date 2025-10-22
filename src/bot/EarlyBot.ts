@@ -45,7 +45,6 @@ export class EarlyBot {
         orderbookImbalanceThreshold: systemConfig.detection.microstructure.orderbookImbalance.threshold,
         spreadAnomalyThreshold: systemConfig.detection.microstructure.frontRunning.spreadImpactThreshold,
         liquidityShiftThreshold: systemConfig.detection.microstructure.liquidityVacuum.depthDropThreshold,
-        momentumThreshold: systemConfig.detection.signals.priceMovement.percentageThreshold,
         tickBufferSize: systemConfig.performance.memory.maxRingBufferSize,
       },
       discord: {

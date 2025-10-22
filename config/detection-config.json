@@ -116,7 +116,7 @@
     "markets": {
       "minVolumeThreshold": 15000,
       "maxMarketsToTrack": 100,
-      "refreshIntervalMs": 30000,
+      "refreshIntervalMs": 300000,
       "inactivityTimeoutMs": 3600000
     },
     "alerts": {

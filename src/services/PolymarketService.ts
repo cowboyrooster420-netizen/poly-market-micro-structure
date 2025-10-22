@@ -90,10 +90,35 @@ export class PolymarketService {
 
   async getMarketById(marketId: string): Promise<Market | null> {
     try {
-      // Search in markets list since there's no direct market endpoint
-      const markets = await this.getActiveMarkets();
-      const market = markets.find(m => m.id === marketId || m.id.includes(marketId));
-      return market || null;
+      // Try to fetch single market by condition_id query parameter
+      // This is much more efficient than fetching all 1000 markets
+      const response = await polymarketRateLimiter.execute(async () => {
+        return fetchWithTimeout(
+          `${this.config.apiUrls.gamma}/markets?condition_id=${marketId}`,
+          {},
+          10000
+        );
+      });
+
+      if (!response.ok) {
+        // If query parameter doesn't work, fall back to searching all markets
+        // This ensures backward compatibility
+        logger.debug(`Direct market query failed (${response.status}), falling back to search`);
+        const markets = await this.getActiveMarkets();
+        const market = markets.find(m => m.id === marketId || m.id.includes(marketId));
+        return market || null;
+      }
+
+      const data = await response.json();
+      const marketsList = Array.isArray(data) ? data : (data ? [data] : []);
+
+      if (marketsList.length === 0) {
+        return null;
+      }
+
+      const transformedMarkets = this.transformMarkets(marketsList);
+      return transformedMarkets[0] || null;
+
     } catch (error) {
       logger.error(`Error fetching market ${marketId}:`, error);
       return null;

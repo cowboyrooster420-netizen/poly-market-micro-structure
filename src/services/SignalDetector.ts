@@ -11,13 +11,24 @@ export class SignalDetector {
   private lastScanTime = 0;
   private orderbookAnalyzer: OrderbookAnalyzer;
   private recentSignals: Map<string, { signalType: string; timestamp: number; }[]> = new Map();
-  
+
   // Statistical activity score storage for percentile-based scoring
   private activityDistributions: Map<string, {
     volumeChanges: number[];
     priceChanges: number[];
     competitivenessScores: number[];
   }> = new Map();
+
+  // Cleanup tracking to prevent unbounded memory growth
+  private lastFullCleanup = 0;
+  private lastQuickCleanup = 0;
+  private readonly FULL_CLEANUP_INTERVAL = 60 * 60 * 1000; // 1 hour
+  private readonly QUICK_CLEANUP_INTERVAL = 10 * 60 * 1000; // 10 minutes
+
+  // Hard limits to prevent unbounded memory growth
+  private readonly MAX_MARKETS_IN_HISTORY = 200; // Limit total markets tracked
+  private readonly MAX_HISTORY_POINTS = 2880; // 24 hours at 30s intervals
+  private readonly MAX_SIGNALS_PER_MARKET = 100; // Limit signals stored per market
 
   constructor(config: BotConfig) {
     this.config = config;
@@ -98,15 +109,18 @@ export class SignalDetector {
     }
 
     this.lastScanTime = currentTime;
-    
+
     // Periodically perform comprehensive memory cleanup (every hour)
-    const oneHour = 60 * 60 * 1000;
-    if (currentTime % oneHour < 30000) { // Check if we're within 30 seconds of the hour
+    if (currentTime - this.lastFullCleanup >= this.FULL_CLEANUP_INTERVAL) {
       const activeMarketIds = new Set(markets.map(m => m.id));
       this.performMemoryCleanup(currentTime, activeMarketIds);
-    } else if (currentTime % (10 * 60 * 1000) < 30000) {
+      this.lastFullCleanup = currentTime;
+      logger.debug(`Performed full memory cleanup at ${new Date(currentTime).toISOString()}`);
+    } else if (currentTime - this.lastQuickCleanup >= this.QUICK_CLEANUP_INTERVAL) {
       // Quick signal cleanup every 10 minutes
       this.cleanupOldSignals(currentTime);
+      this.lastQuickCleanup = currentTime;
+      logger.debug(`Performed quick signal cleanup at ${new Date(currentTime).toISOString()}`);
     }
     
     // Apply multiple testing correction to reduce false positives
@@ -123,16 +137,7 @@ export class SignalDetector {
     return correctedSignals;
   }
 
-  // New methods for real-time microstructure analysis
-  detectMicrostructureSignals(tick: TickData): EarlySignal[] {
-    const signals: EarlySignal[] = [];
-
-    // No longer using technical indicators (RSI/MACD removed)
-    // Microstructure signals are now handled by OrderbookAnalyzer
-
-    return signals;
-  }
-
+  // Real-time orderbook analysis for microstructure signals
   detectOrderbookSignals(orderbook: OrderbookData): EarlySignal[] {
     const signals: EarlySignal[] = [];
     
@@ -159,7 +164,28 @@ export class SignalDetector {
 
   private updateMarketMetrics(market: Market, timestamp: number): void {
     const marketId = market.id;
-    
+
+    // Enforce maximum number of markets tracked (LRU eviction)
+    if (!this.marketHistory.has(marketId) && this.marketHistory.size >= this.MAX_MARKETS_IN_HISTORY) {
+      // Find and remove the oldest updated market
+      let oldestMarketId: string | null = null;
+      let oldestTimestamp = Infinity;
+
+      for (const [id, history] of this.marketHistory.entries()) {
+        const lastUpdate = history.length > 0 ? history[history.length - 1].lastUpdated : 0;
+        if (lastUpdate < oldestTimestamp) {
+          oldestTimestamp = lastUpdate;
+          oldestMarketId = id;
+        }
+      }
+
+      if (oldestMarketId) {
+        this.marketHistory.delete(oldestMarketId);
+        this.recentSignals.delete(oldestMarketId); // Clean up related signals
+        logger.debug(`Evicted market ${oldestMarketId.substring(0, 8)}... from history (LRU, limit: ${this.MAX_MARKETS_IN_HISTORY})`);
+      }
+    }
+
     if (!this.marketHistory.has(marketId)) {
       this.marketHistory.set(marketId, []);
     }
@@ -168,11 +194,11 @@ export class SignalDetector {
     const previousMetrics = history[history.length - 1];
 
     const currentPrices = market.outcomePrices.map(p => parseFloat(p));
-    
+
     const currentMetrics: MarketMetrics = {
       marketId,
       volume24h: market.volumeNum,
-      volumeChange: previousMetrics ? 
+      volumeChange: previousMetrics ?
         ((market.volumeNum - previousMetrics.volume24h) / previousMetrics.volume24h) * 100 : 0,
       priceChange: this.calculatePriceChange(currentPrices, previousMetrics),
       prices: currentPrices,
@@ -182,12 +208,9 @@ export class SignalDetector {
 
     history.push(currentMetrics);
 
-    // Keep only last 24 hours of data (assuming 30s intervals = 2880 data points)
-    // Use more aggressive cleanup for memory efficiency
-    const maxDataPoints = 2880;
-    if (history.length > maxDataPoints) {
-      // Remove oldest entries in batches for better performance
-      const excessEntries = history.length - maxDataPoints;
+    // Enforce maximum history points per market
+    if (history.length > this.MAX_HISTORY_POINTS) {
+      const excessEntries = history.length - this.MAX_HISTORY_POINTS;
       history.splice(0, excessEntries);
     }
   }
@@ -601,6 +624,12 @@ export class SignalDetector {
 
     const marketSignals = this.recentSignals.get(marketId)!;
     marketSignals.push({ signalType, timestamp });
+
+    // Enforce maximum signals per market
+    if (marketSignals.length > this.MAX_SIGNALS_PER_MARKET) {
+      // Remove oldest signals
+      marketSignals.splice(0, marketSignals.length - this.MAX_SIGNALS_PER_MARKET);
+    }
 
     // Clean up old signals (keep only last 24 hours)
     const oneDayAgo = timestamp - (24 * 60 * 60 * 1000);

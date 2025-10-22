@@ -126,29 +126,46 @@ export class EnhancedPolymarketService extends PolymarketService {
         // Check if market exists in database
         const existingMarket = await this.dataLayer.getMarket(market.id);
         
+        let shouldSavePrices = false;
+
         if (!existingMarket) {
-          // New market
+          // New market - save everything
           await this.dataLayer.saveMarket(market);
           this.syncStats.newMarkets++;
-          
+          shouldSavePrices = true;
+
           logger.info(`New market discovered: ${market.question.substring(0, 50)}... (${market.id})`);
         } else {
-          // Check if market needs updating
-          const needsUpdate = 
+          // Check if market data has changed
+          const needsUpdate =
             existingMarket.volumeNum !== market.volumeNum ||
             existingMarket.active !== market.active ||
             existingMarket.closed !== market.closed;
-          
+
           if (needsUpdate) {
             await this.dataLayer.saveMarket(market);
             this.syncStats.updatedMarkets++;
-            
             logger.debug(`Market updated: ${market.id}`);
           }
+
+          // Check if prices have changed
+          if (market.outcomePrices && existingMarket.outcomePrices) {
+            for (let i = 0; i < Math.min(market.outcomePrices.length, existingMarket.outcomePrices.length); i++) {
+              const newPrice = parseFloat(market.outcomePrices[i]);
+              const oldPrice = parseFloat(existingMarket.outcomePrices[i]);
+              if (!isNaN(newPrice) && !isNaN(oldPrice) && Math.abs(newPrice - oldPrice) > 0.0001) {
+                shouldSavePrices = true;
+                break;
+              }
+            }
+          } else if (market.outcomePrices) {
+            // No previous prices - save them
+            shouldSavePrices = true;
+          }
         }
-        
-        // Save current prices
-        if (market.outcomePrices && market.outcomePrices.length >= 2) {
+
+        // Only save prices if they've changed
+        if (shouldSavePrices && market.outcomePrices && market.outcomePrices.length >= 2) {
           for (let i = 0; i < market.outcomePrices.length; i++) {
             const price = parseFloat(market.outcomePrices[i]);
             if (!isNaN(price)) {
@@ -294,12 +311,15 @@ export class EnhancedPolymarketService extends PolymarketService {
 
   async getOrderbookHistory(marketId: string, hours: number = 24): Promise<OrderbookData[]> {
     try {
+      // OPTIMIZED: Added LIMIT to prevent unbounded result sets
+      // Limiting to 2,880 rows (24 hours at 1 snapshot per 30 seconds)
       const result = await this.dataLayer.db.query(`
         SELECT market_id, EXTRACT(EPOCH FROM timestamp) * 1000 as timestamp,
                bids, asks, spread, mid_price, best_bid, best_ask
-        FROM orderbook_snapshots 
+        FROM orderbook_snapshots
         WHERE market_id = $1 AND timestamp > (CURRENT_TIMESTAMP - INTERVAL '${hours} hours')
         ORDER BY timestamp DESC
+        LIMIT 2880
       `, [marketId]);
 
       return result.map((row: any) => ({
