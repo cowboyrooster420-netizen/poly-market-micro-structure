@@ -203,9 +203,22 @@ export class DiscordAlerter {
     // Add market link if available
     if (signal.marketId) {
       embed.fields = embed.fields || [];
+
+      // Try to use the slug for a clean URL, fallback to condition_id
+      const slug = signal.market?.metadata?.slug;
+      let marketUrl: string;
+
+      if (slug) {
+        // Use slug for clean, working URL
+        marketUrl = `https://polymarket.com/event/${slug}`;
+      } else {
+        // Fallback: use condition_id (may not work but better than nothing)
+        marketUrl = `https://polymarket.com/event/${signal.marketId}`;
+      }
+
       embed.fields.push({
         name: '🔗 View Market',
-        value: `[Open on Polymarket](https://polymarket.com/market/${signal.marketId})`,
+        value: `[Open on Polymarket](${marketUrl})`,
         inline: false,
       });
     }
