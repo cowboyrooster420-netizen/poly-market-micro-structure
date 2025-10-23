@@ -1,6 +1,7 @@
 import { EarlySignal, AlertMessage, BotConfig, MicrostructureSignal } from '../types';
 import { logger } from '../utils/logger';
 import { discordRateLimiter } from '../utils/RateLimiter';
+import type { SignalPerformanceTracker } from './SignalPerformanceTracker';
 
 interface DiscordEmbed {
   title?: string;
@@ -29,6 +30,7 @@ interface DiscordWebhookPayload {
 
 export class DiscordAlerter {
   private config: BotConfig;
+  private performanceTracker?: SignalPerformanceTracker;
   private alertCounts: Map<string, number> = new Map();
   private lastAlertTimes: Map<string, number> = new Map();
   private rateLimitBuffer: number[] = [];
@@ -57,8 +59,16 @@ export class DiscordAlerter {
     unusual_activity: '🔍',
   };
 
-  constructor(config: BotConfig) {
+  constructor(config: BotConfig, performanceTracker?: SignalPerformanceTracker) {
     this.config = config;
+    this.performanceTracker = performanceTracker;
+  }
+
+  /**
+   * Set the performance tracker (can be set after construction)
+   */
+  setPerformanceTracker(tracker: SignalPerformanceTracker): void {
+    this.performanceTracker = tracker;
   }
 
   async sendAlert(signal: EarlySignal): Promise<boolean> {
@@ -74,9 +84,9 @@ export class DiscordAlerter {
     }
 
     try {
-      const alertMessage = this.buildAlertMessage(signal);
+      const alertMessage = await this.buildAlertMessage(signal);
       const embed = this.createEmbed(alertMessage, signal);
-      
+
       const payload: DiscordWebhookPayload = {
         embeds: [embed],
         username: 'Poly Early Bot',
@@ -172,16 +182,16 @@ export class DiscordAlerter {
     }
   }
 
-  private buildAlertMessage(signal: EarlySignal): AlertMessage {
+  private async buildAlertMessage(signal: EarlySignal): Promise<AlertMessage> {
     const alertType = this.determineAlertType(signal);
     const emoji = this.EMOJIS[signal.signalType as keyof typeof this.EMOJIS] || '🔔';
-    
+
     return {
       type: alertType,
       title: `${emoji} ${this.formatSignalType(signal.signalType)} Detected`,
       description: this.buildDescription(signal),
       color: this.COLORS[alertType.toUpperCase() as keyof typeof this.COLORS] || this.COLORS.INFO,
-      fields: this.buildFields(signal),
+      fields: await this.buildFields(signal),
       footer: `Confidence: ${(signal.confidence * 100).toFixed(0)}% | Poly Early Bot`,
       timestamp: signal.timestamp,
     };
@@ -307,11 +317,11 @@ export class DiscordAlerter {
   private buildDescription(signal: EarlySignal): string {
     const marketId = signal.marketId.substring(0, 8) + '...';
     const question = signal.market.question?.substring(0, 100) || 'Market data';
-    
+
     return `**Market:** \`${marketId}\`\n**Question:** ${question}${question.length === 100 ? '...' : ''}`;
   }
 
-  private buildFields(signal: EarlySignal): Array<{ name: string; value: string; inline?: boolean }> {
+  private async buildFields(signal: EarlySignal): Promise<Array<{ name: string; value: string; inline?: boolean }>>{
     const fields = [
       {
         name: 'Market ID',
@@ -334,6 +344,12 @@ export class DiscordAlerter {
     const directionField = this.buildDirectionIndicator(signal);
     if (directionField) {
       fields.push(directionField);
+    }
+
+    // Add historical performance stats if available
+    const performanceField = await this.buildPerformanceStatsField(signal);
+    if (performanceField) {
+      fields.push(performanceField);
     }
 
     // Add detailed reasoning section based on signal type
@@ -447,6 +463,73 @@ export class DiscordAlerter {
     }
 
     return null;
+  }
+
+  /**
+   * Build performance stats field showing historical accuracy and P&L for this signal type
+   */
+  private async buildPerformanceStatsField(signal: EarlySignal): Promise<{ name: string; value: string; inline: boolean } | null> {
+    if (!this.performanceTracker) {
+      return null;
+    }
+
+    try {
+      const stats = await this.performanceTracker.getSignalTypeStats(signal.signalType);
+      if (!stats || stats.totalSignals < 5) {
+        // Don't show stats until we have at least 5 signals for meaningful data
+        return null;
+      }
+
+      let statsText = '```\n━━━━━ HISTORICAL PERFORMANCE ━━━━━\n';
+
+      // Accuracy metrics
+      statsText += `Sample Size: ${stats.totalSignals} signals\n`;
+      if (stats.accuracy > 0) {
+        statsText += `Accuracy: ${(stats.accuracy * 100).toFixed(1)}%\n`;
+      }
+      if (stats.winRate > 0) {
+        statsText += `Win Rate: ${(stats.winRate * 100).toFixed(1)}%\n`;
+      }
+
+      // P&L metrics
+      if (stats.avgPnL1hr !== 0) {
+        statsText += `Avg P&L (1hr): ${stats.avgPnL1hr > 0 ? '+' : ''}${stats.avgPnL1hr.toFixed(2)}%\n`;
+      }
+      if (stats.avgPnL24hr !== 0) {
+        statsText += `Avg P&L (24hr): ${stats.avgPnL24hr > 0 ? '+' : ''}${stats.avgPnL24hr.toFixed(2)}%\n`;
+      }
+
+      // Risk metrics
+      if (stats.sharpeRatio !== 0) {
+        const sharpeEmoji = stats.sharpeRatio > 1 ? '✅' : stats.sharpeRatio > 0 ? '⚠️' : '❌';
+        statsText += `Sharpe Ratio: ${stats.sharpeRatio.toFixed(2)} ${sharpeEmoji}\n`;
+      }
+
+      // Expected value and position sizing
+      if (stats.expectedValue !== 0) {
+        const evEmoji = stats.expectedValue > 0 ? '📈' : '📉';
+        statsText += `Expected Value: ${stats.expectedValue > 0 ? '+' : ''}${stats.expectedValue.toFixed(2)}% ${evEmoji}\n`;
+      }
+      if (stats.kellyFraction > 0) {
+        statsText += `Kelly Position Size: ${(stats.kellyFraction * 100).toFixed(1)}% of capital\n`;
+      }
+
+      // Bayesian confidence
+      if (stats.posteriorConfidence !== 0.5) {
+        statsText += `Bayesian Confidence: ${(stats.posteriorConfidence * 100).toFixed(1)}%\n`;
+      }
+
+      statsText += '```';
+
+      return {
+        name: '📊 Track Record',
+        value: statsText,
+        inline: false
+      };
+    } catch (error) {
+      logger.error('Error fetching performance stats:', error);
+      return null;
+    }
   }
 
   private buildReasoningSection(signal: EarlySignal): { name: string; value: string; inline: boolean } | null {
