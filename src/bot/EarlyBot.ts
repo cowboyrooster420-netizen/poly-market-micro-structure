@@ -5,6 +5,7 @@ import { SignalDetector } from '../services/SignalDetector';
 import { MicrostructureDetector } from '../services/MicrostructureDetector';
 import { DiscordAlerter } from '../services/DiscordAlerter';
 import { TopicClusteringEngine } from '../services/TopicClusteringEngine';
+import { SignalPerformanceTracker } from '../services/SignalPerformanceTracker';
 import { DatabaseManager } from '../data/database';
 import { DataAccessLayer } from '../data/DataAccessLayer';
 import { getDatabaseConfig, validateDatabaseConfig } from '../config/database.config';
@@ -24,6 +25,7 @@ export class EarlyBot {
   private microstructureDetector: MicrostructureDetector;
   private discordAlerter: DiscordAlerter;
   private topicClusteringEngine: TopicClusteringEngine;
+  private signalPerformanceTracker: SignalPerformanceTracker;
   private isRunning = false;
   private intervalId?: NodeJS.Timeout;
   private performanceReportInterval?: NodeJS.Timeout;
@@ -68,6 +70,7 @@ export class EarlyBot {
     this.microstructureDetector = new MicrostructureDetector(this.config);
     this.discordAlerter = new DiscordAlerter(this.config);
     this.topicClusteringEngine = new TopicClusteringEngine();
+    this.signalPerformanceTracker = new SignalPerformanceTracker(this.database);
   }
 
   private parseIntWithBounds(value: string | undefined, defaultValue: number, min: number, max: number): number {
@@ -146,7 +149,17 @@ export class EarlyBot {
         () => this.microstructureDetector.initialize(),
         'microstructure_detector_initialization'
       );
-      
+
+      // Initialize signal performance tracker
+      await errorHandler.executeWithRetry(
+        () => this.signalPerformanceTracker.initialize(),
+        'signal_performance_tracker_initialization'
+      );
+
+      // Connect performance tracker to Discord alerter for historical stats
+      this.discordAlerter.setPerformanceTracker(this.signalPerformanceTracker);
+      logger.info('Discord alerts will now include historical performance stats');
+
       // Set up event handlers
       this.microstructureDetector.onSignal(this.createSafeSignalHandler());
       this.microstructureDetector.onMicrostructureSignal(this.createSafeMicrostructureHandler());
@@ -208,6 +221,10 @@ export class EarlyBot {
 
     // Start microstructure detection
     await this.microstructureDetector.start();
+
+    // Start signal performance tracking (background P&L updates)
+    await this.signalPerformanceTracker.start();
+    logger.info('Signal performance tracking started (P&L updates every 30 minutes)');
 
     // Get high-volume markets for tracking
     const markets = await advancedLogger.timeOperation(
@@ -322,7 +339,11 @@ export class EarlyBot {
         'polymarket_service_stop',
         { maxRetries: 2 }
       );
-      
+
+      // Stop signal performance tracking
+      await this.signalPerformanceTracker.stop();
+      logger.info('Signal performance tracking stopped');
+
       // Stop health monitoring
       healthMonitor.stop();
       
@@ -487,14 +508,14 @@ export class EarlyBot {
       await advancedLogger.timeOperation(
         () => this.dataLayer.saveSignal(signal),
         'save_signal_to_database',
-        { 
+        {
           component: 'bot',
           operation: 'signal_persistence',
           signalType: signal.signalType,
           marketId: signal.marketId
         }
       );
-      
+
       metricsCollector.incrementCounter('signals.saved_to_database', 1);
     } catch (error) {
       metricsCollector.incrementCounter('signals.database_save_errors', 1);
@@ -504,6 +525,29 @@ export class EarlyBot {
         signalType: signal.signalType,
         marketId: signal.marketId
       });
+    }
+
+    // Track signal performance (P&L tracking)
+    if (signal.market) {
+      try {
+        const performanceRecordId = await this.signalPerformanceTracker.trackSignal(signal, signal.market);
+        advancedLogger.info('Signal performance tracking started', {
+          component: 'bot',
+          operation: 'performance_tracking',
+          metadata: {
+            signalType: signal.signalType,
+            marketId: signal.marketId,
+            performanceRecordId
+          }
+        });
+      } catch (error) {
+        advancedLogger.error('Error starting signal performance tracking', error as Error, {
+          component: 'bot',
+          operation: 'performance_tracking',
+          signalType: signal.signalType,
+          marketId: signal.marketId
+        });
+      }
     }
 
     // Send Discord alert
