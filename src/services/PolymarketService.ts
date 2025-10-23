@@ -211,13 +211,11 @@ export class PolymarketService {
 
   private extractPrices(data: any): string[] {
     // Handle various price formats from Polymarket API
-    if (data.tokens && data.tokens.length >= 2) {
-      return [
-        data.tokens[0].price || '0',
-        data.tokens[1].price || '0'
-      ];
+    if (data.tokens && data.tokens.length > 0) {
+      // Extract ALL token prices, not just first 2 (supports multi-outcome markets)
+      return data.tokens.map((token: any) => token.price || '0');
     }
-    
+
     if (data.outcomePrices) {
       if (typeof data.outcomePrices === 'string') {
         try {
@@ -230,7 +228,8 @@ export class PolymarketService {
         return data.outcomePrices;
       }
     }
-    
+
+    // Fallback for binary markets
     return ['0', '0'];
   }
 
