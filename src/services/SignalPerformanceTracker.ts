@@ -2,7 +2,7 @@ import { EarlySignal, Market } from '../types';
 import { DatabaseManager } from '../data/database';
 import { logger } from '../utils/logger';
 import { advancedLogger } from '../utils/AdvancedLogger';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 
 export interface SignalPerformanceRecord {
   id: string;
@@ -156,7 +156,7 @@ export class SignalPerformanceTracker {
     const entryPrice = parseFloat(market.outcomePrices[outcomeIndex] || '0');
 
     const record: SignalPerformanceRecord = {
-      id: uuidv4(),
+      id: randomUUID(),
       marketId: market.id,
       signalType: signal.signalType,
       confidence: signal.confidence,
