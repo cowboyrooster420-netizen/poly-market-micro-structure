@@ -177,6 +177,102 @@ export class DatabaseManager {
         FOREIGN KEY (market_id) REFERENCES markets(id)
       );
 
+      -- Signal Performance Tracking (P&L and Quality Metrics)
+      CREATE TABLE IF NOT EXISTS signal_performance (
+        id UUID PRIMARY KEY,
+        signal_id INTEGER,
+        market_id VARCHAR(100) NOT NULL,
+        signal_type VARCHAR(50) NOT NULL,
+        confidence DECIMAL NOT NULL,
+
+        -- Entry details
+        entry_time TIMESTAMP NOT NULL,
+        entry_outcome_index INTEGER NOT NULL,
+        entry_outcome_name VARCHAR(100) NOT NULL,
+        entry_price DECIMAL NOT NULL,
+        entry_direction VARCHAR(10) NOT NULL CHECK (entry_direction IN ('bullish', 'bearish', 'neutral')),
+
+        -- Market state at entry
+        market_volume DECIMAL,
+        market_active BOOLEAN,
+
+        -- Exit prices at time intervals
+        price_30min DECIMAL,
+        price_1hr DECIMAL,
+        price_4hr DECIMAL,
+        price_24hr DECIMAL,
+        price_7day DECIMAL,
+
+        -- P&L calculations (as % return if bought at entry)
+        pnl_30min DECIMAL,
+        pnl_1hr DECIMAL,
+        pnl_4hr DECIMAL,
+        pnl_24hr DECIMAL,
+        pnl_7day DECIMAL,
+
+        -- Final resolution (if market closed)
+        market_resolved BOOLEAN DEFAULT false,
+        resolution_time TIMESTAMP,
+        winning_outcome_index INTEGER,
+        final_pnl DECIMAL,
+
+        -- Signal quality metrics
+        was_correct BOOLEAN,
+        magnitude DECIMAL,  -- How much price moved in predicted direction
+        max_favorable_move DECIMAL,  -- Best price reached
+        max_adverse_move DECIMAL,  -- Worst price reached
+
+        -- Additional metadata
+        metadata JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+        FOREIGN KEY (market_id) REFERENCES markets(id),
+        FOREIGN KEY (signal_id) REFERENCES signals(id)
+      );
+
+      -- Signal Type Performance Aggregates (Pre-computed stats)
+      CREATE TABLE IF NOT EXISTS signal_type_performance (
+        signal_type VARCHAR(50) PRIMARY KEY,
+
+        -- Volume metrics
+        total_signals INTEGER DEFAULT 0,
+        signals_last_7d INTEGER DEFAULT 0,
+        signals_last_30d INTEGER DEFAULT 0,
+
+        -- Accuracy metrics
+        correct_predictions INTEGER DEFAULT 0,
+        accuracy DECIMAL DEFAULT 0,
+        precision_score DECIMAL DEFAULT 0,
+        recall_score DECIMAL DEFAULT 0,
+        f1_score DECIMAL DEFAULT 0,
+
+        -- Financial performance
+        avg_pnl_30min DECIMAL DEFAULT 0,
+        avg_pnl_1hr DECIMAL DEFAULT 0,
+        avg_pnl_24hr DECIMAL DEFAULT 0,
+        avg_pnl_final DECIMAL DEFAULT 0,
+
+        -- Risk metrics
+        sharpe_ratio DECIMAL DEFAULT 0,
+        win_rate DECIMAL DEFAULT 0,
+        avg_win DECIMAL DEFAULT 0,
+        avg_loss DECIMAL DEFAULT 0,
+        max_drawdown DECIMAL DEFAULT 0,
+
+        -- Bayesian confidence adjustment
+        prior_confidence DECIMAL DEFAULT 0.5,
+        posterior_confidence DECIMAL DEFAULT 0.5,
+
+        -- Expected value
+        expected_value DECIMAL DEFAULT 0,
+        kelly_fraction DECIMAL DEFAULT 0,
+
+        -- Last update
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        sample_size INTEGER DEFAULT 0
+      );
+
       -- Microstructure metrics
       CREATE TABLE IF NOT EXISTS microstructure_metrics (
         id SERIAL PRIMARY KEY,
@@ -267,6 +363,14 @@ export class DatabaseManager {
       CREATE INDEX IF NOT EXISTS idx_signals_type ON signals(signal_type);
       CREATE INDEX IF NOT EXISTS idx_signals_validated ON signals(validated, timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_signals_time ON signals(timestamp DESC);
+
+      -- Signal performance indexes
+      CREATE INDEX IF NOT EXISTS idx_signal_perf_signal_id ON signal_performance(signal_id);
+      CREATE INDEX IF NOT EXISTS idx_signal_perf_market_time ON signal_performance(market_id, entry_time DESC);
+      CREATE INDEX IF NOT EXISTS idx_signal_perf_type_time ON signal_performance(signal_type, entry_time DESC);
+      CREATE INDEX IF NOT EXISTS idx_signal_perf_resolved ON signal_performance(market_resolved, entry_time DESC);
+      CREATE INDEX IF NOT EXISTS idx_signal_perf_correct ON signal_performance(was_correct, signal_type);
+      CREATE INDEX IF NOT EXISTS idx_signal_perf_entry_time ON signal_performance(entry_time DESC);
 
       -- Microstructure and analysis indexes
       CREATE INDEX IF NOT EXISTS idx_microstructure_market_time ON microstructure_metrics(market_id, timestamp DESC);
