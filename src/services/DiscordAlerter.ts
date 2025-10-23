@@ -330,6 +330,12 @@ export class DiscordAlerter {
       },
     ];
 
+    // Add direction indicator if determinable
+    const directionField = this.buildDirectionIndicator(signal);
+    if (directionField) {
+      fields.push(directionField);
+    }
+
     // Add detailed reasoning section based on signal type
     const reasoningField = this.buildReasoningSection(signal);
     if (reasoningField) {
@@ -356,6 +362,93 @@ export class DiscordAlerter {
     return fields;
   }
 
+  private buildDirectionIndicator(signal: EarlySignal): { name: string; value: string; inline: boolean } | null {
+    const metadata = signal.metadata;
+    if (!metadata) return null;
+
+    let direction: string | null = null;
+    let emoji = '';
+
+    switch (signal.signalType) {
+      case 'price_movement':
+        // Extract which outcome moved and direction
+        if (metadata.priceChanges) {
+          const outcomes = signal.market?.outcomes || ['YES', 'NO'];
+          let maxChange = 0;
+          let maxOutcomeIndex = 0;
+
+          Object.entries(metadata.priceChanges).forEach(([key, value]) => {
+            const index = parseInt(key.replace('outcome_', ''));
+            const change = value as number;
+            if (Math.abs(change) > Math.abs(maxChange)) {
+              maxChange = change;
+              maxOutcomeIndex = index;
+            }
+          });
+
+          const outcomeName = outcomes[maxOutcomeIndex] || `Outcome ${maxOutcomeIndex}`;
+          const changeSign = maxChange > 0 ? '+' : '';
+          emoji = maxChange > 0 ? '📈' : '📉';
+          direction = `${emoji} ${outcomeName}: ${changeSign}${maxChange.toFixed(1)}%`;
+        }
+        break;
+
+      case 'orderbook_imbalance':
+        // Determine bullish (bid-heavy) vs bearish (ask-heavy)
+        if (metadata.microstructureData?.context) {
+          const bidVolume = metadata.microstructureData.context.bidVolume || 0;
+          const askVolume = metadata.microstructureData.context.askVolume || 0;
+          const ratio = askVolume > 0 ? bidVolume / askVolume : 0;
+
+          if (ratio > 1.5) {
+            emoji = '🐂';
+            direction = `${emoji} BULLISH (${ratio.toFixed(2)}:1 bid/ask)`;
+          } else if (ratio < 0.67) {
+            emoji = '🐻';
+            direction = `${emoji} BEARISH (1:${(1/ratio).toFixed(2)} bid/ask)`;
+          }
+        }
+        break;
+
+      case 'unusual_activity':
+        // Check if there's directional price movement
+        if (metadata.priceChanges || metadata.volumeChange !== undefined) {
+          const volumeChange = metadata.volumeChange || 0;
+          if (volumeChange > 10) {
+            emoji = '⚡';
+            direction = `${emoji} INCREASING ACTIVITY (+${volumeChange.toFixed(1)}% volume)`;
+          }
+        }
+        break;
+
+      case 'volume_spike':
+        // Check current prices to infer direction if available
+        if (signal.market?.outcomePrices) {
+          const prices = signal.market.outcomePrices.map(p => parseFloat(p));
+          const outcomes = signal.market?.outcomes || ['YES', 'NO'];
+
+          // Show current prices for context
+          if (prices.length >= 2) {
+            const yesPrice = (prices[0] * 100).toFixed(0);
+            const noPrice = (prices[1] * 100).toFixed(0);
+            emoji = '💹';
+            direction = `${emoji} Current: ${outcomes[0] || 'YES'} ${yesPrice}% / ${outcomes[1] || 'NO'} ${noPrice}%`;
+          }
+        }
+        break;
+    }
+
+    if (direction) {
+      return {
+        name: '🎯 Direction',
+        value: direction,
+        inline: false
+      };
+    }
+
+    return null;
+  }
+
   private buildReasoningSection(signal: EarlySignal): { name: string; value: string; inline: boolean } | null {
     const metadata = signal.metadata;
     if (!metadata) return null;
@@ -378,7 +471,20 @@ export class DiscordAlerter {
 
       case 'price_movement':
         if (metadata.maxChange !== undefined) {
-          reasoning += `Max Price Change: ${metadata.maxChange.toFixed(2)}%\n`;
+          // Show per-outcome changes
+          if (metadata.priceChanges) {
+            const outcomes = signal.market?.outcomes || ['YES', 'NO'];
+            reasoning += `Outcome Changes:\n`;
+            Object.entries(metadata.priceChanges).forEach(([key, value]) => {
+              const index = parseInt(key.replace('outcome_', ''));
+              const outcomeName = outcomes[index] || `Outcome ${index}`;
+              const change = value as number;
+              const sign = change > 0 ? '+' : '';
+              reasoning += `  ${outcomeName}: ${sign}${change.toFixed(2)}%\n`;
+            });
+          } else {
+            reasoning += `Max Price Change: ${metadata.maxChange.toFixed(2)}%\n`;
+          }
           if (metadata.immediateChange !== undefined) {
             reasoning += `Immediate Change: ${metadata.immediateChange.toFixed(2)}%\n`;
           }
@@ -423,6 +529,22 @@ export class DiscordAlerter {
       case 'orderbook_imbalance':
         if (metadata.microstructureData) {
           const data = metadata.microstructureData;
+          const bidVolume = data.context?.bidVolume || 0;
+          const askVolume = data.context?.askVolume || 0;
+          const ratio = askVolume > 0 ? bidVolume / askVolume : 0;
+
+          // Determine direction
+          let direction = 'NEUTRAL';
+          if (ratio > 1.5) {
+            direction = 'BULLISH (bid-heavy)';
+          } else if (ratio < 0.67) {
+            direction = 'BEARISH (ask-heavy)';
+          }
+
+          reasoning += `Direction: ${direction}\n`;
+          reasoning += `Bid Volume: $${bidVolume.toFixed(0)}\n`;
+          reasoning += `Ask Volume: $${askVolume.toFixed(0)}\n`;
+          reasoning += `Bid/Ask Ratio: ${ratio.toFixed(2)}:1\n`;
           reasoning += `Current Imbalance: ${data.current?.toFixed(4) || 'N/A'}\n`;
           reasoning += `Baseline: ${data.baseline?.toFixed(4) || 'N/A'}\n`;
           reasoning += `Change: ${data.change > 0 ? '+' : ''}${data.change?.toFixed(4) || 'N/A'}\n`;
