@@ -397,7 +397,7 @@ export class SignalPerformanceTracker {
     const rows = await this.database.query(`
       SELECT * FROM signal_performance
       WHERE market_resolved = false
-      AND entry_time > NOW() - INTERVAL '7 days'
+      AND entry_time > datetime('now', '-7 days')
       ORDER BY entry_time DESC
       LIMIT 1000
     `);
@@ -508,7 +508,7 @@ export class SignalPerformanceTracker {
         sharpe_ratio, win_rate, avg_win, avg_loss,
         expected_value, kelly_fraction, posterior_confidence, sample_size,
         last_updated
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, datetime('now'))
       ON CONFLICT (signal_type) DO UPDATE SET
         total_signals = EXCLUDED.total_signals,
         correct_predictions = EXCLUDED.correct_predictions,
@@ -525,7 +525,7 @@ export class SignalPerformanceTracker {
         kelly_fraction = EXCLUDED.kelly_fraction,
         posterior_confidence = EXCLUDED.posterior_confidence,
         sample_size = EXCLUDED.sample_size,
-        last_updated = NOW()
+        last_updated = datetime('now')
     `, [
       signalType, totalSignals, correctPredictions, accuracy,
       avgPnL30min, avgPnL1hr, avgPnL24hr, avgPnLFinal,
@@ -637,7 +637,7 @@ export class SignalPerformanceTracker {
     values.push(id);
     const query = `
       UPDATE signal_performance
-      SET ${setClauses.join(', ')}, updated_at = NOW()
+      SET ${setClauses.join(', ')}, updated_at = datetime('now')
       WHERE id = $${paramIndex}
     `;
 
