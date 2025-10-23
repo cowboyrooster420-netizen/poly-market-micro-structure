@@ -40,7 +40,6 @@
     "redis": "^4.6.11",
     "socket.io": "^4.7.2",
     "sqlite3": "^5.1.6",
-    "uuid": "^13.0.0",
     "ws": "^8.14.2"
   },
   "devDependencies": {
@@ -51,7 +50,6 @@
     "@types/node-fetch": "^2.6.9",
     "@types/pg": "^8.10.9",
     "@types/redis": "^4.0.10",
-    "@types/uuid": "^10.0.0",
     "@types/ws": "^8.5.9",
     "@typescript-eslint/eslint-plugin": "^6.17.0",
     "@typescript-eslint/parser": "^6.17.0",
