@@ -635,17 +635,30 @@ export class SignalPerformanceTracker {
       'metadata'
     ]);
 
+    // Property name to column name mapping for edge cases
+    const PROPERTY_TO_COLUMN_MAP: Record<string, string> = {
+      'finalPnL': 'final_pnl'
+    };
+
     const setClauses: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
 
     Object.entries(updates).forEach(([key, value]) => {
-      // Convert camelCase to snake_case
-      const columnName = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+      // Convert camelCase to snake_case (handles both uppercase letters and numbers)
+      // Check mapping first for edge cases, then apply standard conversion
+      let columnName = PROPERTY_TO_COLUMN_MAP[key];
+
+      if (!columnName) {
+        // Standard conversion: maxFavorableMove → max_favorable_move, price30min → price_30min
+        columnName = key
+          .replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)  // Handle uppercase
+          .replace(/([a-z])(\d)/g, '$1_$2');  // Handle letter-to-number transitions
+      }
 
       // Validate column name against whitelist
       if (!ALLOWED_COLUMNS.has(columnName)) {
-        logger.warn(`Attempted to update invalid column: ${columnName}`);
+        logger.warn(`Attempted to update invalid column: ${key} → ${columnName}`);
         return; // Skip this column
       }
 
