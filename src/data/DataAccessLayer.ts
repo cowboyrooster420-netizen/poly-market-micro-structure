@@ -42,6 +42,21 @@ export class DataAccessLayer {
     this.db = db;
   }
 
+  /**
+   * Get timestamp SQL fragment for database insertion (handles PostgreSQL vs SQLite differences)
+   */
+  private getTimestampSQL(paramIndex: number): string {
+    const provider = this.db.getProvider();
+
+    if (provider === 'postgresql') {
+      // PostgreSQL: use TO_TIMESTAMP function
+      return `TO_TIMESTAMP($${paramIndex} / 1000)`;
+    } else {
+      // SQLite/Memory: use datetime function with unixepoch
+      return `datetime($${paramIndex} / 1000, 'unixepoch')`;
+    }
+  }
+
   // Market operations
   async saveMarket(market: Market): Promise<void> {
     try {
@@ -268,7 +283,7 @@ export class DataAccessLayer {
     try {
       await this.db.query(`
         INSERT INTO orderbook_snapshots (market_id, timestamp, bids, asks, spread, mid_price, best_bid, best_ask)
-        VALUES ($1, TO_TIMESTAMP($2 / 1000), $3, $4, $5, $6, $7, $8)
+        VALUES ($1, ${this.getTimestampSQL(2)}, $3, $4, $5, $6, $7, $8)
       `, [
         orderbook.marketId,
         orderbook.timestamp,
@@ -341,7 +356,7 @@ export class DataAccessLayer {
     try {
       await this.db.query(`
         INSERT INTO trade_ticks (market_id, timestamp, price, size, side)
-        VALUES ($1, TO_TIMESTAMP($2 / 1000), $3, $4, $5)
+        VALUES ($1, ${this.getTimestampSQL(2)}, $3, $4, $5)
       `, [
         tick.marketId,
         tick.timestamp,
@@ -384,21 +399,42 @@ export class DataAccessLayer {
   // Signal operations
   async saveSignal(signal: EarlySignal): Promise<number> {
     try {
-      const result = await this.db.query(`
-        INSERT INTO signals (market_id, signal_type, confidence, timestamp, metadata)
-        VALUES ($1, $2, $3, TO_TIMESTAMP($4 / 1000), $5)
-        RETURNING id
-      `, [
-        signal.marketId,
-        signal.signalType,
-        signal.confidence,
-        signal.timestamp,
-        JSON.stringify(signal.metadata || {})
-      ]);
+      const provider = this.db.getProvider();
 
-      const signalId = result[0].id;
-      logger.info(`Signal saved with ID ${signalId}: ${signal.signalType} for market ${signal.marketId}`);
-      return signalId;
+      if (provider === 'postgresql') {
+        // PostgreSQL: use RETURNING
+        const result = await this.db.query(`
+          INSERT INTO signals (market_id, signal_type, confidence, timestamp, metadata)
+          VALUES ($1, $2, $3, ${this.getTimestampSQL(4)}, $5)
+          RETURNING id
+        `, [
+          signal.marketId,
+          signal.signalType,
+          signal.confidence,
+          signal.timestamp,
+          JSON.stringify(signal.metadata || {})
+        ]);
+
+        const signalId = result[0].id;
+        logger.info(`Signal saved with ID ${signalId}: ${signal.signalType} for market ${signal.marketId}`);
+        return signalId;
+      } else {
+        // SQLite: get last inserted rowid
+        const result = await this.db.query(`
+          INSERT INTO signals (market_id, signal_type, confidence, timestamp, metadata)
+          VALUES ($1, $2, $3, ${this.getTimestampSQL(4)}, $5)
+        `, [
+          signal.marketId,
+          signal.signalType,
+          signal.confidence,
+          signal.timestamp,
+          JSON.stringify(signal.metadata || {})
+        ]);
+
+        const signalId = result.insertId || result.lastID;
+        logger.info(`Signal saved with ID ${signalId}: ${signal.signalType} for market ${signal.marketId}`);
+        return signalId;
+      }
     } catch (error) {
       logger.error(`Error saving signal for market ${signal.marketId}:`, error);
       throw error;
@@ -407,14 +443,29 @@ export class DataAccessLayer {
 
   async getSignals(marketId?: string, signalType?: string, hours: number = 24): Promise<SignalRecord[]> {
     try {
+      const provider = this.db.getProvider();
+
+      let timestampExtract, validationTimeExtract, timeFilter;
+
+      if (provider === 'postgresql') {
+        timestampExtract = "EXTRACT(EPOCH FROM timestamp) * 1000";
+        validationTimeExtract = "EXTRACT(EPOCH FROM validation_time) * 1000";
+        timeFilter = `timestamp > (CURRENT_TIMESTAMP - INTERVAL '${hours} hours')`;
+      } else {
+        // SQLite: timestamps are stored as unix epoch seconds
+        timestampExtract = "CAST(strftime('%s', timestamp) AS INTEGER) * 1000";
+        validationTimeExtract = "CAST(strftime('%s', validation_time) AS INTEGER) * 1000";
+        timeFilter = `timestamp > datetime('now', '-${hours} hours')`;
+      }
+
       let query = `
-        SELECT id, market_id, signal_type, confidence, 
-               EXTRACT(EPOCH FROM timestamp) * 1000 as timestamp,
-               metadata, validated, 
-               EXTRACT(EPOCH FROM validation_time) * 1000 as validation_time,
+        SELECT id, market_id, signal_type, confidence,
+               ${timestampExtract} as timestamp,
+               metadata, validated,
+               ${validationTimeExtract} as validation_time,
                outcome
-        FROM signals 
-        WHERE timestamp > (CURRENT_TIMESTAMP - INTERVAL '${hours} hours')
+        FROM signals
+        WHERE ${timeFilter}
       `;
       const params: any[] = [];
       let paramIndex = 1;
@@ -474,7 +525,7 @@ export class DataAccessLayer {
           micro_price, micro_price_slope, micro_price_drift,
           orderbook_imbalance, spread_bps, liquidity_vacuum,
           volume_z_score, depth_z_score, spread_z_score, imbalance_z_score
-        ) VALUES ($1, TO_TIMESTAMP($2 / 1000), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ) VALUES ($1, ${this.getTimestampSQL(2)}, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       `, [
         metrics.marketId,
         metrics.timestamp,
@@ -506,10 +557,10 @@ export class DataAccessLayer {
       await this.db.query(`
         INSERT INTO anomaly_scores (
           market_id, timestamp, volume_anomaly, depth_anomaly, spread_anomaly,
-          imbalance_anomaly, price_anomaly, mahalanobis_distance, 
-          isolation_forest_score, combined_score, is_anomalous, 
+          imbalance_anomaly, price_anomaly, mahalanobis_distance,
+          isolation_forest_score, combined_score, is_anomalous,
           anomaly_type, confidence
-        ) VALUES ($1, TO_TIMESTAMP($2 / 1000), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ) VALUES ($1, ${this.getTimestampSQL(2)}, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       `, [
         anomalyScore.marketId,
         anomalyScore.timestamp,
