@@ -137,11 +137,11 @@ export class SQLiteDialect implements SQLDialect {
   }
 
   now(): string {
-    return "datetime('now')";
+    return "CURRENT_TIMESTAMP";
   }
 
   currentTimestamp(): string {
-    return "datetime('now')";
+    return "CURRENT_TIMESTAMP";
   }
 
   param(index: number): string {
