@@ -56,18 +56,35 @@ async function gracefulShutdown(signal: string) {
   }
 }
 
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => {
+  gracefulShutdown('SIGINT').catch(err => {
+    logger.error('Error during SIGINT shutdown:', err);
+    process.exit(1);
+  });
+});
+
+process.on('SIGTERM', () => {
+  gracefulShutdown('SIGTERM').catch(err => {
+    logger.error('Error during SIGTERM shutdown:', err);
+    process.exit(1);
+  });
+});
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught Exception:', error);
-  gracefulShutdown('uncaughtException');
+  gracefulShutdown('uncaughtException').catch(err => {
+    logger.error('Error during uncaughtException shutdown:', err);
+    process.exit(1);
+  });
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  gracefulShutdown('unhandledRejection');
+  gracefulShutdown('unhandledRejection').catch(err => {
+    logger.error('Error during unhandledRejection shutdown:', err);
+    process.exit(1);
+  });
 });
 
 main().catch((error) => {

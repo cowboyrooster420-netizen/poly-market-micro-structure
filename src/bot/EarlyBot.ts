@@ -73,40 +73,6 @@ export class EarlyBot {
     this.signalPerformanceTracker = new SignalPerformanceTracker(this.database);
   }
 
-  private parseIntWithBounds(value: string | undefined, defaultValue: number, min: number, max: number): number {
-    if (!value) return defaultValue;
-    
-    const parsed = parseInt(value);
-    if (isNaN(parsed)) {
-      logger.warn(`Invalid integer value "${value}", using default ${defaultValue}`);
-      return defaultValue;
-    }
-    
-    if (parsed < min || parsed > max) {
-      logger.warn(`Value ${parsed} out of bounds [${min}, ${max}], using default ${defaultValue}`);
-      return defaultValue;
-    }
-    
-    return parsed;
-  }
-
-  private parseFloatWithBounds(value: string | undefined, defaultValue: number, min: number, max: number): number {
-    if (!value) return defaultValue;
-    
-    const parsed = parseFloat(value);
-    if (isNaN(parsed)) {
-      logger.warn(`Invalid float value "${value}", using default ${defaultValue}`);
-      return defaultValue;
-    }
-    
-    if (parsed < min || parsed > max) {
-      logger.warn(`Value ${parsed} out of bounds [${min}, ${max}], using default ${defaultValue}`);
-      return defaultValue;
-    }
-    
-    return parsed;
-  }
-
   async initialize(): Promise<void> {
     logger.info('Initializing Poly Early Bot with comprehensive error handling...');
     
@@ -413,9 +379,9 @@ export class EarlyBot {
       
       // Log cluster statistics
       const clusterStats = this.topicClusteringEngine.getClusterStatistics();
-      const activeClusters = Object.entries(clusterStats).filter(([_, stats]) => (stats as any).marketCount > 0);
+      const activeClusters = Object.entries(clusterStats).filter(([_, stats]) => stats.marketCount > 0);
       if (activeClusters.length > 0) {
-        logger.info(`🏷️  Active clusters: ${activeClusters.map(([name, stats]) => `${name}(${(stats as any).marketCount})`).join(', ')}`);
+        logger.info(`🏷️  Active clusters: ${activeClusters.map(([name, stats]) => `${name}(${stats.marketCount})`).join(', ')}`);
       }
       
       // DETECT SIGNALS from all markets

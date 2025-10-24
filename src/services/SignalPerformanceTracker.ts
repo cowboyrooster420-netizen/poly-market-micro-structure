@@ -394,13 +394,16 @@ export class SignalPerformanceTracker {
    * Get all open (unresolved) signals
    */
   private async getOpenSignals(): Promise<SignalPerformanceRecord[]> {
+    // Calculate 7 days ago in JavaScript for database-agnostic query
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
     const rows = await this.database.query(`
       SELECT * FROM signal_performance
-      WHERE market_resolved = false
-      AND entry_time > datetime('now', '-7 days')
+      WHERE market_resolved = $1
+      AND entry_time > $2
       ORDER BY entry_time DESC
       LIMIT 1000
-    `);
+    `, [false, sevenDaysAgo]);
 
     return rows.map((row: any) => this.rowToRecord(row));
   }
@@ -501,6 +504,7 @@ export class SignalPerformanceTracker {
     const posteriorConfidence = this.calculateBayesianConfidence(accuracy, totalSignals);
 
     // Save stats
+    const now = new Date();
     await this.database.query(`
       INSERT INTO signal_type_performance (
         signal_type, total_signals, correct_predictions, accuracy,
@@ -508,7 +512,7 @@ export class SignalPerformanceTracker {
         sharpe_ratio, win_rate, avg_win, avg_loss,
         expected_value, kelly_fraction, posterior_confidence, sample_size,
         last_updated
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, datetime('now'))
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
       ON CONFLICT (signal_type) DO UPDATE SET
         total_signals = EXCLUDED.total_signals,
         correct_predictions = EXCLUDED.correct_predictions,
@@ -525,12 +529,13 @@ export class SignalPerformanceTracker {
         kelly_fraction = EXCLUDED.kelly_fraction,
         posterior_confidence = EXCLUDED.posterior_confidence,
         sample_size = EXCLUDED.sample_size,
-        last_updated = datetime('now')
+        last_updated = $18
     `, [
       signalType, totalSignals, correctPredictions, accuracy,
       avgPnL30min, avgPnL1hr, avgPnL24hr, avgPnLFinal,
       sharpeRatio, winRate, avgWin, avgLoss,
-      expectedValue, kellyFraction, posteriorConfidence, totalSignals
+      expectedValue, kellyFraction, posteriorConfidence, totalSignals,
+      now, now
     ]);
 
     advancedLogger.info(`Updated stats for ${signalType}`, {
@@ -621,6 +626,15 @@ export class SignalPerformanceTracker {
   }
 
   private async updatePerformanceRecord(id: string, updates: Partial<SignalPerformanceRecord>): Promise<void> {
+    // Whitelist of allowed column names to prevent SQL injection
+    const ALLOWED_COLUMNS = new Set([
+      'price_30min', 'price_1hr', 'price_4hr', 'price_24hr', 'price_7day',
+      'pnl_30min', 'pnl_1hr', 'pnl_4hr', 'pnl_24hr', 'pnl_7day',
+      'market_resolved', 'resolution_time', 'winning_outcome_index', 'final_pnl',
+      'was_correct', 'magnitude', 'max_favorable_move', 'max_adverse_move',
+      'metadata'
+    ]);
+
     const setClauses: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
@@ -628,16 +642,27 @@ export class SignalPerformanceTracker {
     Object.entries(updates).forEach(([key, value]) => {
       // Convert camelCase to snake_case
       const columnName = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+
+      // Validate column name against whitelist
+      if (!ALLOWED_COLUMNS.has(columnName)) {
+        logger.warn(`Attempted to update invalid column: ${columnName}`);
+        return; // Skip this column
+      }
+
       setClauses.push(`${columnName} = $${paramIndex++}`);
       values.push(value);
     });
 
     if (setClauses.length === 0) return;
 
+    // Add updated_at timestamp
+    setClauses.push(`updated_at = $${paramIndex++}`);
+    values.push(new Date());
+
     values.push(id);
     const query = `
       UPDATE signal_performance
-      SET ${setClauses.join(', ')}, updated_at = datetime('now')
+      SET ${setClauses.join(', ')}
       WHERE id = $${paramIndex}
     `;
 
