@@ -48,7 +48,7 @@ export class DataAccessLayer {
       await this.db.query(`
         INSERT INTO markets (id, condition_id, question, description, outcomes, volume, active, closed, end_date, metadata)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        ON CONFLICT (id) DO UPDATE SET
+        ON CONFLICT(id) DO UPDATE SET
           question = EXCLUDED.question,
           description = EXCLUDED.description,
           outcomes = EXCLUDED.outcomes,

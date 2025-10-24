@@ -85,6 +85,16 @@ export class DatabaseManager {
   private async initializeSQLite(): Promise<void> {
     return new Promise((resolve, reject) => {
       const dbPath = this.config.database || './data/polymarket.db';
+
+      // Ensure directory exists
+      const fs = require('fs');
+      const path = require('path');
+      const dir = path.dirname(dbPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+        logger.info(`Created database directory: ${dir}`);
+      }
+
       this.sqlite = new Database(dbPath, (err) => {
         if (err) {
           reject(err);

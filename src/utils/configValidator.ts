@@ -13,7 +13,7 @@ export function validateEnvironmentVariables(): ValidationResult {
   // Required variables
   const requiredVars = {
     CLOB_API_URL: process.env.CLOB_API_URL,
-    DATA_API_URL: process.env.DATA_API_URL,
+    GAMMA_API_URL: process.env.GAMMA_API_URL,
   };
 
   // Validate required variables

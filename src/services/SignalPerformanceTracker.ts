@@ -513,7 +513,7 @@ export class SignalPerformanceTracker {
         expected_value, kelly_fraction, posterior_confidence, sample_size,
         last_updated
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-      ON CONFLICT (signal_type) DO UPDATE SET
+      ON CONFLICT(signal_type) DO UPDATE SET
         total_signals = EXCLUDED.total_signals,
         correct_predictions = EXCLUDED.correct_predictions,
         accuracy = EXCLUDED.accuracy,
@@ -558,7 +558,7 @@ export class SignalPerformanceTracker {
     await this.database.query(`
       INSERT INTO signal_type_performance (signal_type, sample_size)
       VALUES ($1, 0)
-      ON CONFLICT (signal_type) DO NOTHING
+      ON CONFLICT(signal_type) DO NOTHING
     `, [signalType]);
   }
 
