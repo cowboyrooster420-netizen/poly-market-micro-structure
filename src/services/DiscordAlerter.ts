@@ -134,39 +134,120 @@ export class DiscordAlerter {
     if (!this.config.discord.webhookUrl) return false;
 
     try {
+      // Get PnL stats if performance tracker is available
+      let pnlStats = null;
+      if (this.performanceTracker) {
+        try {
+          pnlStats = await this.performanceTracker.getAggregatePnLStats();
+        } catch (error) {
+          logger.warn('Failed to get PnL stats for performance report:', error);
+        }
+      }
+
+      const fields: Array<{ name: string; value: string; inline?: boolean }> = [];
+
+      // System Health Section
+      fields.push({
+        name: '🔧 System Health',
+        value: '```' +
+          `Markets Tracked: ${stats.uniqueMarkets || 0}\n` +
+          `WebSocket: ${stats.connected ? '✅ Connected' : '❌ Disconnected'}\n` +
+          `Signals Detected: ${stats.totalSignals || 0}\n` +
+          `Clustering: ${stats.clustering?.healthy ? '✅ Healthy' : '⚠️ Issues'}` +
+          '```',
+        inline: false
+      });
+
+      // PnL Performance Section (if available)
+      if (pnlStats && pnlStats.totalSignals > 0) {
+        let pnlText = '```\n';
+
+        // Signal counts
+        pnlText += `Total Signals: ${pnlStats.totalSignals}\n`;
+        pnlText += `├─ Open: ${pnlStats.openSignals}\n`;
+        pnlText += `└─ Closed: ${pnlStats.closedSignals}\n\n`;
+
+        // Performance metrics (only show if we have closed signals)
+        if (pnlStats.closedSignals > 0) {
+          const winRateEmoji = pnlStats.overallWinRate >= 0.6 ? '🎯' : pnlStats.overallWinRate >= 0.5 ? '✅' : '⚠️';
+          pnlText += `Win Rate: ${(pnlStats.overallWinRate * 100).toFixed(1)}% ${winRateEmoji}\n`;
+          pnlText += `Accuracy: ${(pnlStats.overallAccuracy * 100).toFixed(1)}%\n\n`;
+
+          // P&L metrics
+          const totalPnLEmoji = pnlStats.totalPnL > 0 ? '📈' : '📉';
+          pnlText += `Total P&L: ${pnlStats.totalPnL > 0 ? '+' : ''}${pnlStats.totalPnL.toFixed(2)}% ${totalPnLEmoji}\n`;
+
+          if (pnlStats.avgPnL1hr !== 0) {
+            pnlText += `Avg P&L (1hr): ${pnlStats.avgPnL1hr > 0 ? '+' : ''}${pnlStats.avgPnL1hr.toFixed(2)}%\n`;
+          }
+          if (pnlStats.avgPnL24hr !== 0) {
+            pnlText += `Avg P&L (24hr): ${pnlStats.avgPnL24hr > 0 ? '+' : ''}${pnlStats.avgPnL24hr.toFixed(2)}%\n`;
+          }
+          if (pnlStats.avgPnLFinal !== 0) {
+            pnlText += `Avg P&L (Final): ${pnlStats.avgPnLFinal > 0 ? '+' : ''}${pnlStats.avgPnLFinal.toFixed(2)}%\n`;
+          }
+        }
+
+        pnlText += '```';
+
+        fields.push({
+          name: '💰 P&L Performance',
+          value: pnlText,
+          inline: false
+        });
+
+        // Best/Worst Performers (only if we have closed signals)
+        if (pnlStats.closedSignals > 0 && (pnlStats.bestSignalType || pnlStats.worstSignalType)) {
+          let performersText = '```\n';
+
+          if (pnlStats.bestSignalType) {
+            performersText += `🏆 Best: ${pnlStats.bestSignalType.type}\n`;
+            performersText += `   Avg P&L: ${pnlStats.bestSignalType.pnl > 0 ? '+' : ''}${pnlStats.bestSignalType.pnl.toFixed(2)}%\n\n`;
+          }
+
+          if (pnlStats.worstSignalType) {
+            performersText += `📉 Worst: ${pnlStats.worstSignalType.type}\n`;
+            performersText += `   Avg P&L: ${pnlStats.worstSignalType.pnl > 0 ? '+' : ''}${pnlStats.worstSignalType.pnl.toFixed(2)}%`;
+          }
+
+          performersText += '\n```';
+
+          fields.push({
+            name: '📊 Signal Type Performance',
+            value: performersText,
+            inline: false
+          });
+        }
+
+        // Recent Performance (last 24h)
+        if (pnlStats.recentSignals24h > 0) {
+          const recentWinRateEmoji = pnlStats.recentWinRate24h >= 0.6 ? '🔥' : pnlStats.recentWinRate24h >= 0.5 ? '✅' : '⚠️';
+
+          fields.push({
+            name: '⏱️ Last 24 Hours',
+            value: '```\n' +
+              `Signals: ${pnlStats.recentSignals24h}\n` +
+              `Win Rate: ${(pnlStats.recentWinRate24h * 100).toFixed(1)}% ${recentWinRateEmoji}` +
+              '\n```',
+            inline: false
+          });
+        }
+      } else if (pnlStats && pnlStats.totalSignals === 0) {
+        fields.push({
+          name: '💰 P&L Performance',
+          value: '```No signals tracked yet.\nWaiting for first signal detection...```',
+          inline: false
+        });
+      }
+
       const embed: DiscordEmbed = {
         title: '📈 Performance Report',
+        description: `*Automated report generated every 30 minutes*`,
         color: this.COLORS.INFO,
-        fields: [
-          {
-            name: 'Total Signals',
-            value: stats.totalSignals.toString(),
-            inline: true,
-          },
-          {
-            name: 'Markets Tracked',
-            value: stats.uniqueMarkets.toString(),
-            inline: true,
-          },
-          {
-            name: 'WebSocket Status',
-            value: stats.connected ? '✅ Connected' : '❌ Disconnected',
-            inline: true,
-          },
-          {
-            name: 'Signals/Minute',
-            value: stats.signalsPerMinute || 'N/A',
-            inline: true,
-          },
-          {
-            name: 'Uptime',
-            value: stats.uptime || 'N/A',
-            inline: true,
-          },
-        ],
+        fields,
         timestamp: new Date().toISOString(),
         footer: {
-          text: 'Poly Early Bot Performance',
+          text: 'Poly Early Bot - Signal Performance Tracker',
         },
       };
 

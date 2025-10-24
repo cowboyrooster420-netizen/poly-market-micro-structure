@@ -445,6 +445,87 @@ export class SignalPerformanceTracker {
   }
 
   /**
+   * Get aggregate PnL statistics across all signals
+   */
+  async getAggregatePnLStats(): Promise<{
+    totalSignals: number;
+    openSignals: number;
+    closedSignals: number;
+    overallWinRate: number;
+    overallAccuracy: number;
+    avgPnL1hr: number;
+    avgPnL24hr: number;
+    avgPnLFinal: number;
+    totalPnL: number;
+    bestSignalType: { type: string; pnl: number } | null;
+    worstSignalType: { type: string; pnl: number } | null;
+    recentSignals24h: number;
+    recentWinRate24h: number;
+  }> {
+    // Get all signals
+    const allSignals = await this.database.query(
+      'SELECT * FROM signal_performance'
+    );
+
+    const openSignals = allSignals.filter((s: any) => !s.market_resolved);
+    const closedSignals = allSignals.filter((s: any) => s.market_resolved);
+
+    // Overall stats
+    const totalSignals = allSignals.length;
+    const correctPredictions = closedSignals.filter((s: any) => s.was_correct).length;
+    const overallAccuracy = closedSignals.length > 0 ? correctPredictions / closedSignals.length : 0;
+
+    // Win rate
+    const wins = closedSignals.filter((s: any) => parseFloat(s.final_pnl || 0) > 0);
+    const overallWinRate = closedSignals.length > 0 ? wins.length / closedSignals.length : 0;
+
+    // Average P&L
+    const avgPnL1hr = this.average(allSignals.map((s: any) => parseFloat(s.pnl_1hr || 0)).filter((p: number) => p !== 0));
+    const avgPnL24hr = this.average(allSignals.map((s: any) => parseFloat(s.pnl_24hr || 0)).filter((p: number) => p !== 0));
+    const avgPnLFinal = this.average(closedSignals.map((s: any) => parseFloat(s.final_pnl || 0)));
+
+    // Total P&L
+    const totalPnL = closedSignals.reduce((sum: number, s: any) => sum + parseFloat(s.final_pnl || 0), 0);
+
+    // Best and worst signal types
+    const signalTypeStats = await this.database.query(
+      'SELECT signal_type, avg_pnl_final FROM signal_type_performance ORDER BY avg_pnl_final DESC'
+    );
+
+    const bestSignalType = signalTypeStats.length > 0 ? {
+      type: signalTypeStats[0].signal_type,
+      pnl: parseFloat(signalTypeStats[0].avg_pnl_final || 0)
+    } : null;
+
+    const worstSignalType = signalTypeStats.length > 0 ? {
+      type: signalTypeStats[signalTypeStats.length - 1].signal_type,
+      pnl: parseFloat(signalTypeStats[signalTypeStats.length - 1].avg_pnl_final || 0)
+    } : null;
+
+    // Recent performance (last 24 hours)
+    const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const recentSignals = closedSignals.filter((s: any) => s.entry_time > twentyFourHoursAgo);
+    const recentWins = recentSignals.filter((s: any) => parseFloat(s.final_pnl || 0) > 0);
+    const recentWinRate24h = recentSignals.length > 0 ? recentWins.length / recentSignals.length : 0;
+
+    return {
+      totalSignals,
+      openSignals: openSignals.length,
+      closedSignals: closedSignals.length,
+      overallWinRate,
+      overallAccuracy,
+      avgPnL1hr,
+      avgPnL24hr,
+      avgPnLFinal,
+      totalPnL,
+      bestSignalType,
+      worstSignalType,
+      recentSignals24h: recentSignals.length,
+      recentWinRate24h
+    };
+  }
+
+  /**
    * Recalculate stats for all signal types
    */
   private async recalculateAllSignalTypeStats(): Promise<void> {
