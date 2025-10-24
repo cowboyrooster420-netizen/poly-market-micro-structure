@@ -337,29 +337,57 @@ export class PolymarketService {
   // Batch operations for efficiency
   async getMultipleOrderbooks(marketIds: string[]): Promise<Map<string, OrderbookData>> {
     const results = new Map<string, OrderbookData>();
-    
-    // Process sequentially using rate limiter
-    for (const marketId of marketIds) {
-      const orderbook = await this.getOrderbook(marketId);
-      if (orderbook) {
-        results.set(marketId, orderbook);
+
+    // Process in parallel with rate limiter (rate limiter handles throttling internally)
+    const promises = marketIds.map(async (marketId) => {
+      try {
+        const orderbook = await this.getOrderbook(marketId);
+        if (orderbook) {
+          return { marketId, orderbook };
+        }
+      } catch (error) {
+        logger.warn(`Failed to fetch orderbook for ${marketId}:`, error);
+      }
+      return null;
+    });
+
+    const settled = await Promise.all(promises);
+
+    // Collect successful results
+    for (const result of settled) {
+      if (result) {
+        results.set(result.marketId, result.orderbook);
       }
     }
-    
+
     return results;
   }
 
   async getMultiplePrices(marketIds: string[]): Promise<Map<string, number>> {
     const results = new Map<string, number>();
-    
-    // Process sequentially using rate limiter
-    for (const marketId of marketIds) {
-      const price = await this.getMarketPrice(marketId);
-      if (price !== null) {
-        results.set(marketId, price);
+
+    // Process in parallel with rate limiter (rate limiter handles throttling internally)
+    const promises = marketIds.map(async (marketId) => {
+      try {
+        const price = await this.getMarketPrice(marketId);
+        if (price !== null) {
+          return { marketId, price };
+        }
+      } catch (error) {
+        logger.warn(`Failed to fetch price for ${marketId}:`, error);
+      }
+      return null;
+    });
+
+    const settled = await Promise.all(promises);
+
+    // Collect successful results
+    for (const result of settled) {
+      if (result) {
+        results.set(result.marketId, result.price);
       }
     }
-    
+
     return results;
   }
 

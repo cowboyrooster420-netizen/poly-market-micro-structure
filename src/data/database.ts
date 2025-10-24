@@ -2,6 +2,8 @@ import { Pool, PoolClient } from 'pg';
 import { Database } from 'sqlite3';
 import { createClient, RedisClientType } from 'redis';
 import { logger } from '../utils/logger';
+import { getDialect, SQLDialect, convertParameters } from './DatabaseDialect';
+import { SchemaBuilder } from './SchemaBuilder';
 
 export interface DatabaseConfig {
   provider: 'postgresql' | 'sqlite' | 'memory';
@@ -23,9 +25,11 @@ export class DatabaseManager {
   private sqlite?: Database;
   private redis?: RedisClientType;
   private config: DatabaseConfig;
+  private dialect: SQLDialect;
 
   constructor(config: DatabaseConfig) {
     this.config = config;
+    this.dialect = getDialect(config.provider);
   }
 
   async initialize(): Promise<void> {
@@ -110,276 +114,8 @@ export class DatabaseManager {
   }
 
   private async createSchema(): Promise<void> {
-    const schema = `
-      -- Markets table
-      CREATE TABLE IF NOT EXISTS markets (
-        id VARCHAR(100) PRIMARY KEY,
-        condition_id VARCHAR(100),
-        question TEXT NOT NULL,
-        description TEXT,
-        outcomes JSONB,
-        volume DECIMAL,
-        active BOOLEAN DEFAULT true,
-        closed BOOLEAN DEFAULT false,
-        end_date TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        metadata JSONB
-      );
-
-      -- Historical prices table (time-series)
-      CREATE TABLE IF NOT EXISTS market_prices (
-        id SERIAL PRIMARY KEY,
-        market_id VARCHAR(100) NOT NULL,
-        timestamp TIMESTAMP NOT NULL,
-        outcome_index INTEGER NOT NULL,
-        price DECIMAL NOT NULL,
-        volume DECIMAL,
-        FOREIGN KEY (market_id) REFERENCES markets(id)
-      );
-
-      -- Orderbook snapshots
-      CREATE TABLE IF NOT EXISTS orderbook_snapshots (
-        id SERIAL PRIMARY KEY,
-        market_id VARCHAR(100) NOT NULL,
-        timestamp TIMESTAMP NOT NULL,
-        bids JSONB NOT NULL,
-        asks JSONB NOT NULL,
-        spread DECIMAL,
-        mid_price DECIMAL,
-        best_bid DECIMAL,
-        best_ask DECIMAL,
-        FOREIGN KEY (market_id) REFERENCES markets(id)
-      );
-
-      -- Trade ticks
-      CREATE TABLE IF NOT EXISTS trade_ticks (
-        id SERIAL PRIMARY KEY,
-        market_id VARCHAR(100) NOT NULL,
-        timestamp TIMESTAMP NOT NULL,
-        price DECIMAL NOT NULL,
-        size DECIMAL NOT NULL,
-        side VARCHAR(4) NOT NULL CHECK (side IN ('buy', 'sell')),
-        FOREIGN KEY (market_id) REFERENCES markets(id)
-      );
-
-      -- Signals table
-      CREATE TABLE IF NOT EXISTS signals (
-        id SERIAL PRIMARY KEY,
-        market_id VARCHAR(100) NOT NULL,
-        signal_type VARCHAR(50) NOT NULL,
-        confidence DECIMAL NOT NULL,
-        timestamp TIMESTAMP NOT NULL,
-        metadata JSONB,
-        validated BOOLEAN DEFAULT false,
-        validation_time TIMESTAMP,
-        outcome BOOLEAN,
-        FOREIGN KEY (market_id) REFERENCES markets(id)
-      );
-
-      -- Signal Performance Tracking (P&L and Quality Metrics)
-      CREATE TABLE IF NOT EXISTS signal_performance (
-        id UUID PRIMARY KEY,
-        signal_id INTEGER,
-        market_id VARCHAR(100) NOT NULL,
-        signal_type VARCHAR(50) NOT NULL,
-        confidence DECIMAL NOT NULL,
-
-        -- Entry details
-        entry_time TIMESTAMP NOT NULL,
-        entry_outcome_index INTEGER NOT NULL,
-        entry_outcome_name VARCHAR(100) NOT NULL,
-        entry_price DECIMAL NOT NULL,
-        entry_direction VARCHAR(10) NOT NULL CHECK (entry_direction IN ('bullish', 'bearish', 'neutral')),
-
-        -- Market state at entry
-        market_volume DECIMAL,
-        market_active BOOLEAN,
-
-        -- Exit prices at time intervals
-        price_30min DECIMAL,
-        price_1hr DECIMAL,
-        price_4hr DECIMAL,
-        price_24hr DECIMAL,
-        price_7day DECIMAL,
-
-        -- P&L calculations (as % return if bought at entry)
-        pnl_30min DECIMAL,
-        pnl_1hr DECIMAL,
-        pnl_4hr DECIMAL,
-        pnl_24hr DECIMAL,
-        pnl_7day DECIMAL,
-
-        -- Final resolution (if market closed)
-        market_resolved BOOLEAN DEFAULT false,
-        resolution_time TIMESTAMP,
-        winning_outcome_index INTEGER,
-        final_pnl DECIMAL,
-
-        -- Signal quality metrics
-        was_correct BOOLEAN,
-        magnitude DECIMAL,  -- How much price moved in predicted direction
-        max_favorable_move DECIMAL,  -- Best price reached
-        max_adverse_move DECIMAL,  -- Worst price reached
-
-        -- Additional metadata
-        metadata JSONB,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-        FOREIGN KEY (market_id) REFERENCES markets(id),
-        FOREIGN KEY (signal_id) REFERENCES signals(id)
-      );
-
-      -- Signal Type Performance Aggregates (Pre-computed stats)
-      CREATE TABLE IF NOT EXISTS signal_type_performance (
-        signal_type VARCHAR(50) PRIMARY KEY,
-
-        -- Volume metrics
-        total_signals INTEGER DEFAULT 0,
-        signals_last_7d INTEGER DEFAULT 0,
-        signals_last_30d INTEGER DEFAULT 0,
-
-        -- Accuracy metrics
-        correct_predictions INTEGER DEFAULT 0,
-        accuracy DECIMAL DEFAULT 0,
-        precision_score DECIMAL DEFAULT 0,
-        recall_score DECIMAL DEFAULT 0,
-        f1_score DECIMAL DEFAULT 0,
-
-        -- Financial performance
-        avg_pnl_30min DECIMAL DEFAULT 0,
-        avg_pnl_1hr DECIMAL DEFAULT 0,
-        avg_pnl_24hr DECIMAL DEFAULT 0,
-        avg_pnl_final DECIMAL DEFAULT 0,
-
-        -- Risk metrics
-        sharpe_ratio DECIMAL DEFAULT 0,
-        win_rate DECIMAL DEFAULT 0,
-        avg_win DECIMAL DEFAULT 0,
-        avg_loss DECIMAL DEFAULT 0,
-        max_drawdown DECIMAL DEFAULT 0,
-
-        -- Bayesian confidence adjustment
-        prior_confidence DECIMAL DEFAULT 0.5,
-        posterior_confidence DECIMAL DEFAULT 0.5,
-
-        -- Expected value
-        expected_value DECIMAL DEFAULT 0,
-        kelly_fraction DECIMAL DEFAULT 0,
-
-        -- Last update
-        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        sample_size INTEGER DEFAULT 0
-      );
-
-      -- Microstructure metrics
-      CREATE TABLE IF NOT EXISTS microstructure_metrics (
-        id SERIAL PRIMARY KEY,
-        market_id VARCHAR(100) NOT NULL,
-        timestamp TIMESTAMP NOT NULL,
-        depth_1_bid DECIMAL,
-        depth_1_ask DECIMAL,
-        depth_1_total DECIMAL,
-        micro_price DECIMAL,
-        micro_price_slope DECIMAL,
-        micro_price_drift DECIMAL,
-        orderbook_imbalance DECIMAL,
-        spread_bps DECIMAL,
-        liquidity_vacuum BOOLEAN,
-        volume_z_score DECIMAL,
-        depth_z_score DECIMAL,
-        spread_z_score DECIMAL,
-        imbalance_z_score DECIMAL,
-        FOREIGN KEY (market_id) REFERENCES markets(id)
-      );
-
-      -- Front-running scores
-      CREATE TABLE IF NOT EXISTS front_running_scores (
-        id SERIAL PRIMARY KEY,
-        market_id VARCHAR(100) NOT NULL,
-        timestamp TIMESTAMP NOT NULL,
-        score DECIMAL NOT NULL,
-        confidence DECIMAL NOT NULL,
-        leak_probability DECIMAL NOT NULL,
-        time_to_news DECIMAL,
-        components JSONB,
-        metadata JSONB,
-        FOREIGN KEY (market_id) REFERENCES markets(id)
-      );
-
-      -- Backtest results table
-      CREATE TABLE IF NOT EXISTS backtest_results (
-        id SERIAL PRIMARY KEY,
-        start_date TIMESTAMP NOT NULL,
-        end_date TIMESTAMP NOT NULL,
-        initial_capital DECIMAL NOT NULL,
-        total_returns DECIMAL NOT NULL,
-        sharpe_ratio DECIMAL NOT NULL,
-        max_drawdown DECIMAL NOT NULL,
-        win_rate DECIMAL NOT NULL,
-        total_trades INTEGER NOT NULL,
-        signal_accuracy DECIMAL NOT NULL,
-        config JSONB NOT NULL,
-        results JSONB NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      -- Anomaly scores table for advanced statistical analysis
-      CREATE TABLE IF NOT EXISTS anomaly_scores (
-        id SERIAL PRIMARY KEY,
-        market_id VARCHAR(100) NOT NULL,
-        timestamp TIMESTAMP NOT NULL,
-        volume_anomaly DECIMAL NOT NULL,
-        depth_anomaly DECIMAL NOT NULL,
-        spread_anomaly DECIMAL NOT NULL,
-        imbalance_anomaly DECIMAL NOT NULL,
-        price_anomaly DECIMAL NOT NULL,
-        mahalanobis_distance DECIMAL NOT NULL,
-        isolation_forest_score DECIMAL NOT NULL,
-        combined_score DECIMAL NOT NULL,
-        is_anomalous BOOLEAN NOT NULL,
-        anomaly_type JSONB NOT NULL,
-        confidence DECIMAL NOT NULL,
-        FOREIGN KEY (market_id) REFERENCES markets(id)
-      );
-
-      -- Indexes for performance
-      -- Market lookup indexes
-      CREATE INDEX IF NOT EXISTS idx_markets_active ON markets(active, volume DESC);
-      CREATE INDEX IF NOT EXISTS idx_markets_volume ON markets(volume DESC);
-      CREATE INDEX IF NOT EXISTS idx_markets_closed ON markets(closed);
-
-      -- Time-series data indexes
-      CREATE INDEX IF NOT EXISTS idx_market_prices_market_time ON market_prices(market_id, timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_market_prices_time ON market_prices(timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_orderbook_market_time ON orderbook_snapshots(market_id, timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_orderbook_time ON orderbook_snapshots(timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_trade_ticks_market_time ON trade_ticks(market_id, timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_trade_ticks_time ON trade_ticks(timestamp DESC);
-
-      -- Signal indexes
-      CREATE INDEX IF NOT EXISTS idx_signals_market_time ON signals(market_id, timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_signals_type ON signals(signal_type);
-      CREATE INDEX IF NOT EXISTS idx_signals_validated ON signals(validated, timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_signals_time ON signals(timestamp DESC);
-
-      -- Signal performance indexes
-      CREATE INDEX IF NOT EXISTS idx_signal_perf_signal_id ON signal_performance(signal_id);
-      CREATE INDEX IF NOT EXISTS idx_signal_perf_market_time ON signal_performance(market_id, entry_time DESC);
-      CREATE INDEX IF NOT EXISTS idx_signal_perf_type_time ON signal_performance(signal_type, entry_time DESC);
-      CREATE INDEX IF NOT EXISTS idx_signal_perf_resolved ON signal_performance(market_resolved, entry_time DESC);
-      CREATE INDEX IF NOT EXISTS idx_signal_perf_correct ON signal_performance(was_correct, signal_type);
-      CREATE INDEX IF NOT EXISTS idx_signal_perf_entry_time ON signal_performance(entry_time DESC);
-
-      -- Microstructure and analysis indexes
-      CREATE INDEX IF NOT EXISTS idx_microstructure_market_time ON microstructure_metrics(market_id, timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_front_running_market_time ON front_running_scores(market_id, timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_front_running_score ON front_running_scores(score DESC, timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_backtest_results_date ON backtest_results(created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_anomaly_scores_market_time ON anomaly_scores(market_id, timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_anomaly_scores_anomalous ON anomaly_scores(is_anomalous, timestamp DESC);
-    `;
+    const schemaBuilder = new SchemaBuilder(this.dialect);
+    const schema = schemaBuilder.buildSchema();
 
     await this.executeSchema(schema);
   }
@@ -404,9 +140,12 @@ export class DatabaseManager {
         client.release();
       }
     } else if (this.sqlite) {
+      // Convert PostgreSQL-style $1, $2 parameters to SQLite-style ?
+      const converted = convertParameters(text, params, 'postgresql', this.config.provider);
+
       return new Promise((resolve, reject) => {
-        const method = text.trim().toUpperCase().startsWith('SELECT') ? 'all' : 'run';
-        this.sqlite![method](text, params, function(this: any, err: any, result: any) {
+        const method = converted.sql.trim().toUpperCase().startsWith('SELECT') ? 'all' : 'run';
+        this.sqlite![method](converted.sql, converted.params, function(this: any, err: any, result: any) {
           if (err) {
             reject(err);
           } else {

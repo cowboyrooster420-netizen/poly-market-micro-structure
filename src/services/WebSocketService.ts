@@ -17,6 +17,15 @@ export class WebSocketService {
   private maxReconnectAttempts = 10;
   private subscribedMarkets: Set<string> = new Set();
 
+  // Rate limiting for message processing
+  private messageCount = 0;
+  private messageWindow = Date.now();
+  private readonly MAX_MESSAGES_PER_SECOND = 100;
+
+  // Validation constants
+  private readonly MAX_MESSAGE_SIZE = 50000; // 50KB
+  private readonly MAX_ORDERBOOK_LEVELS = 100;
+
   // Event handlers
   private onTickHandler: ((tick: TickData) => void) | null = null;
   private onOrderbookHandler: ((orderbook: OrderbookData) => void) | null = null;
@@ -45,12 +54,26 @@ export class WebSocketService {
 
       this.ws = new WebSocket(wsUrl);
 
+      // Timeout for connection
+      const timeoutId = setTimeout(() => {
+        if (!this.isConnected && this.isConnecting) {
+          this.isConnecting = false;
+          // Close the WebSocket to cancel the connection attempt
+          if (this.ws) {
+            this.ws.terminate();
+            this.ws = null;
+          }
+          reject(new Error('WebSocket connection timeout'));
+        }
+      }, 10000);
+
       this.ws.on('open', () => {
+        clearTimeout(timeoutId); // Clear the connection timeout
         this.isConnected = true;
         this.isConnecting = false;
         this.reconnectAttempts = 0;
         logger.info('🔌 WebSocket connected to Polymarket Real-Time Data Service');
-        
+
         if (this.onConnectionHandler) {
           this.onConnectionHandler(true);
         }
@@ -65,10 +88,11 @@ export class WebSocketService {
       });
 
       this.ws.on('close', (code: number, reason: string) => {
+        clearTimeout(timeoutId); // Clear timeout on close as well
         this.isConnected = false;
         this.isConnecting = false;
         logger.warn(`WebSocket closed: ${code} - ${reason}`);
-        
+
         if (this.onConnectionHandler) {
           this.onConnectionHandler(false);
         }
@@ -77,18 +101,11 @@ export class WebSocketService {
       });
 
       this.ws.on('error', (error: Error) => {
+        clearTimeout(timeoutId); // Clear timeout on error
         this.isConnecting = false;
         logger.error('WebSocket error:', error);
         reject(error);
       });
-
-      // Timeout for connection
-      setTimeout(() => {
-        if (!this.isConnected && this.isConnecting) {
-          this.isConnecting = false;
-          reject(new Error('WebSocket connection timeout'));
-        }
-      }, 10000);
     });
   }
 
@@ -199,22 +216,48 @@ export class WebSocketService {
 
   private handleMessage(data: WebSocket.Data): void {
     try {
+      // Rate limiting check
+      const now = Date.now();
+      if (now - this.messageWindow > 1000) {
+        // Reset window
+        this.messageWindow = now;
+        this.messageCount = 0;
+      }
+      this.messageCount++;
+      if (this.messageCount > this.MAX_MESSAGES_PER_SECOND) {
+        logger.warn('WebSocket message rate limit exceeded, dropping message');
+        return;
+      }
+
       const rawData = data.toString();
-      
-      // Basic safety checks before parsing
-      if (!rawData || rawData.length > 50000) { // 50KB limit
-        logger.warn('Invalid WebSocket message: empty or too large');
+
+      // Enhanced validation
+      if (!rawData) {
+        logger.warn('Invalid WebSocket message: empty');
+        return;
+      }
+
+      if (rawData.length > this.MAX_MESSAGE_SIZE) {
+        logger.warn(`Invalid WebSocket message: too large (${rawData.length} bytes)`);
         return;
       }
 
       const message = JSON.parse(rawData);
-      
+
       // Log all messages for debugging (first 200 chars)
       logger.debug(`📨 WS Message: ${rawData.substring(0, 200)}${rawData.length > 200 ? '...' : ''}`);
-      
-      // Basic validation - must be an object with a type/channel
+
+      // Enhanced validation - must be an object with a type/channel
       if (!message || typeof message !== 'object') {
         logger.warn('Invalid WebSocket message: not an object');
+        return;
+      }
+
+      // Prevent prototype pollution
+      if (Object.prototype.hasOwnProperty.call(message, '__proto__') ||
+          Object.prototype.hasOwnProperty.call(message, 'constructor') ||
+          Object.prototype.hasOwnProperty.call(message, 'prototype')) {
+        logger.warn('Invalid WebSocket message: attempted prototype pollution');
         return;
       }
 
@@ -314,9 +357,19 @@ export class WebSocketService {
         return;
       }
 
-      // Ensure bids and asks are arrays
+      // Ensure bids and asks are arrays and validate size
       const rawBids = Array.isArray(data.buy) ? data.buy : Array.isArray(data.bids) ? data.bids : [];
       const rawAsks = Array.isArray(data.sell) ? data.sell : Array.isArray(data.asks) ? data.asks : [];
+
+      // Validate orderbook size to prevent DoS
+      if (rawBids.length > this.MAX_ORDERBOOK_LEVELS) {
+        logger.warn(`Orderbook bids exceed limit: ${rawBids.length}`);
+        rawBids.length = this.MAX_ORDERBOOK_LEVELS; // Truncate
+      }
+      if (rawAsks.length > this.MAX_ORDERBOOK_LEVELS) {
+        logger.warn(`Orderbook asks exceed limit: ${rawAsks.length}`);
+        rawAsks.length = this.MAX_ORDERBOOK_LEVELS; // Truncate
+      }
 
       // Transform and validate bid/ask data
       const bids: OrderbookLevel[] = rawBids
@@ -415,14 +468,21 @@ export class WebSocketService {
   private resubscribeToMarkets(): void {
     // Create a copy of the set to avoid modifying while iterating
     const marketsToResubscribe = Array.from(this.subscribedMarkets);
-    
-    // Clear the original set
+
+    // Clear the set before resubscribing (subscribeToMarket will add them back)
     this.subscribedMarkets.clear();
-    
-    // Resubscribe to all markets
+
+    // Resubscribe to all markets (subscribeToMarket adds to subscribedMarkets internally)
     for (const marketId of marketsToResubscribe) {
-      this.subscribeToMarket(marketId);
+      try {
+        this.subscribeToMarket(marketId);
+      } catch (error) {
+        logger.error(`Failed to resubscribe to market ${marketId}:`, error);
+        // Don't add failed subscriptions back to the set
+      }
     }
+
+    logger.info(`Resubscribed to ${this.subscribedMarkets.size}/${marketsToResubscribe.length} markets`);
   }
 
   private handleReconnect(): void {
@@ -443,65 +503,5 @@ export class WebSocketService {
         logger.error('Reconnection failed:', error);
       }
     }, delay);
-  }
-}
-
-// Alternative HTTP-based real-time service for fallback
-export class PollingService {
-  private config: BotConfig;
-  private intervals: Map<string, NodeJS.Timeout> = new Map();
-  private onTickHandler: ((tick: TickData) => void) | null = null;
-  private onOrderbookHandler: ((orderbook: OrderbookData) => void) | null = null;
-
-  constructor(config: BotConfig) {
-    this.config = config;
-  }
-
-  startPolling(marketIds: string[], intervalMs: number = 5000): void {
-    for (const marketId of marketIds) {
-      this.pollMarket(marketId, intervalMs);
-    }
-  }
-
-  stopPolling(marketId?: string): void {
-    if (marketId) {
-      const interval = this.intervals.get(marketId);
-      if (interval) {
-        clearInterval(interval);
-        this.intervals.delete(marketId);
-      }
-    } else {
-      // Stop all polling
-      for (const interval of this.intervals.values()) {
-        clearInterval(interval);
-      }
-      this.intervals.clear();
-    }
-  }
-
-  onTick(handler: (tick: TickData) => void): void {
-    this.onTickHandler = handler;
-  }
-
-  onOrderbook(handler: (orderbook: OrderbookData) => void): void {
-    this.onOrderbookHandler = handler;
-  }
-
-  private pollMarket(marketId: string, intervalMs: number): void {
-    const interval = setInterval(async () => {
-      try {
-        await this.fetchMarketData(marketId);
-      } catch (error) {
-        logger.error(`Error polling market ${marketId}:`, error);
-      }
-    }, intervalMs);
-
-    this.intervals.set(marketId, interval);
-  }
-
-  private async fetchMarketData(marketId: string): Promise<void> {
-    // This would fetch from Polymarket REST API and convert to tick/orderbook data
-    // Implementation would depend on available endpoints
-    logger.debug(`Polling market data for ${marketId}`);
   }
 }

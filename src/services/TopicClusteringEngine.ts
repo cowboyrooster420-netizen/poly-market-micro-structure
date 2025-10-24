@@ -300,9 +300,9 @@ export class TopicClusteringEngine {
   /**
    * Get cluster statistics for monitoring
    */
-  getClusterStatistics(): { [key: string]: any } {
-    const stats: { [key: string]: any } = {};
-    
+  getClusterStatistics(): Record<string, { marketCount: number; totalVolume: number; averageVolume: number }> {
+    const stats: Record<string, { marketCount: number; totalVolume: number; averageVolume: number }> = {};
+
     for (const [entityId, entityCluster] of this.entityClusters) {
       stats[entityId] = {
         marketCount: entityCluster.marketCount,
@@ -310,7 +310,7 @@ export class TopicClusteringEngine {
         averageVolume: entityCluster.marketCount > 0 ? entityCluster.totalVolume / entityCluster.marketCount : 0
       };
     }
-    
+
     return stats;
   }
 
