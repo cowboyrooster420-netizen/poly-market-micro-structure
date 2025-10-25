@@ -101,6 +101,87 @@ export interface DetectionThresholds {
     };
   };
 
+  // Alert Prioritization Configuration
+  alertPrioritization: {
+    enabled: boolean;                      // Enable alert prioritization system
+
+    // Score thresholds for alert levels
+    thresholds: {
+      critical: number;                    // Score >= this = CRITICAL (80)
+      high: number;                        // Score >= this = HIGH (60)
+      medium: number;                      // Score >= this = MEDIUM (40)
+      // Below medium = LOW
+    };
+
+    // Tier-specific adjustments
+    tierAdjustments: {
+      active: {
+        scoreBoost: number;                // Boost for ACTIVE tier (0)
+        minPriority: string;               // Minimum alert level for ACTIVE ('LOW')
+      };
+      watchlist: {
+        scoreBoost: number;                // Boost for WATCHLIST tier (+5)
+        minPriority: string;               // Minimum alert level for WATCHLIST ('MEDIUM')
+      };
+    };
+
+    // Rate limiting per priority level
+    rateLimits: {
+      critical: {
+        maxPerHour: number;                // Max CRITICAL alerts per hour (10)
+        cooldownMinutes: number;           // Cooldown between same market (30)
+      };
+      high: {
+        maxPerHour: number;                // Max HIGH alerts per hour (20)
+        cooldownMinutes: number;           // Cooldown between same market (60)
+      };
+      medium: {
+        maxPerHour: number;                // Max MEDIUM alerts per hour (50)
+        cooldownMinutes: number;           // Cooldown between same market (120)
+      };
+      low: {
+        maxPerHour: number;                // Max LOW alerts per hour (100)
+        cooldownMinutes: number;           // Cooldown between same market (240)
+      };
+    };
+
+    // Alert quality filters
+    qualityFilters: {
+      minOpportunityScore: number;         // Don't alert below this score (30)
+      minCategoryScore: number;            // Min category confidence for alerts (2)
+      requireNonBlacklisted: boolean;      // Never alert on blacklisted markets (true)
+      minVolumeRatio: number;              // Min volume/threshold ratio (0.2)
+    };
+
+    // Notification configuration per priority
+    notifications: {
+      critical: {
+        enableDiscord: boolean;            // Send to Discord (true)
+        enableWebhook: boolean;            // Send to custom webhook (false)
+        mentionEveryone: boolean;          // @everyone mention (true)
+        includeChart: boolean;             // Include price chart (true)
+      };
+      high: {
+        enableDiscord: boolean;            // Send to Discord (true)
+        enableWebhook: boolean;            // Send to custom webhook (false)
+        mentionEveryone: boolean;          // @everyone mention (false)
+        includeChart: boolean;             // Include price chart (true)
+      };
+      medium: {
+        enableDiscord: boolean;            // Send to Discord (true)
+        enableWebhook: boolean;            // Send to custom webhook (false)
+        mentionEveryone: boolean;          // @everyone mention (false)
+        includeChart: boolean;             // Include price chart (false)
+      };
+      low: {
+        enableDiscord: boolean;            // Send to Discord (false)
+        enableWebhook: boolean;            // Send to custom webhook (false)
+        mentionEveryone: boolean;          // @everyone mention (false)
+        includeChart: boolean;             // Include price chart (false)
+      };
+    };
+  };
+
   // Signal Detection Thresholds
   signals: {
     volumeSpike: {
@@ -622,6 +703,80 @@ export class ConfigManager {
             maxAgeDays: 60                    // Beyond 60 days, age doesn't matter
           }
         },
+        alertPrioritization: {
+          enabled: true,
+
+          thresholds: {
+            critical: 80,                    // Top tier opportunities (80-100)
+            high: 60,                        // Strong opportunities (60-79)
+            medium: 40                       // Moderate opportunities (40-59)
+            // Below 40 = LOW
+          },
+
+          tierAdjustments: {
+            active: {
+              scoreBoost: 0,                 // No boost for ACTIVE tier
+              minPriority: 'LOW'             // ACTIVE can send any level
+            },
+            watchlist: {
+              scoreBoost: 5,                 // +5 bonus for WATCHLIST (high conviction)
+              minPriority: 'MEDIUM'          // WATCHLIST minimum is MEDIUM
+            }
+          },
+
+          rateLimits: {
+            critical: {
+              maxPerHour: 10,                // Max 10 CRITICAL/hour (rare, high impact)
+              cooldownMinutes: 30            // 30 min cooldown per market
+            },
+            high: {
+              maxPerHour: 20,                // Max 20 HIGH/hour
+              cooldownMinutes: 60            // 1 hr cooldown per market
+            },
+            medium: {
+              maxPerHour: 50,                // Max 50 MEDIUM/hour
+              cooldownMinutes: 120           // 2 hr cooldown per market
+            },
+            low: {
+              maxPerHour: 100,               // Max 100 LOW/hour (logged only)
+              cooldownMinutes: 240           // 4 hr cooldown per market
+            }
+          },
+
+          qualityFilters: {
+            minOpportunityScore: 30,         // Don't alert if score <30
+            minCategoryScore: 2,             // Need at least 2 keyword matches
+            requireNonBlacklisted: true,     // Never alert blacklisted markets
+            minVolumeRatio: 0.2              // Need at least 20% of threshold volume
+          },
+
+          notifications: {
+            critical: {
+              enableDiscord: true,           // Always send CRITICAL to Discord
+              enableWebhook: false,          // Can enable custom webhook
+              mentionEveryone: true,         // @everyone for CRITICAL
+              includeChart: true             // Include price chart
+            },
+            high: {
+              enableDiscord: true,           // Send HIGH to Discord
+              enableWebhook: false,
+              mentionEveryone: false,        // No @everyone for HIGH
+              includeChart: true             // Include price chart
+            },
+            medium: {
+              enableDiscord: true,           // Send MEDIUM to Discord
+              enableWebhook: false,
+              mentionEveryone: false,
+              includeChart: false            // No chart for MEDIUM
+            },
+            low: {
+              enableDiscord: false,          // Don't send LOW to Discord (log only)
+              enableWebhook: false,
+              mentionEveryone: false,
+              includeChart: false
+            }
+          }
+        },
         microstructure: {
           orderbookImbalance: {
             threshold: 0.3,
@@ -906,7 +1061,40 @@ export class ConfigManager {
         logger.warn(`Opportunity score weights don't sum to 1.0: ${totalWeight}`);
         return false;
       }
-      
+
+      // Alert prioritization validation
+      const alerting = d.alertPrioritization;
+      if (alerting.thresholds.critical < 0 || alerting.thresholds.critical > 100) return false;
+      if (alerting.thresholds.high < 0 || alerting.thresholds.high > 100) return false;
+      if (alerting.thresholds.medium < 0 || alerting.thresholds.medium > 100) return false;
+      if (alerting.thresholds.high >= alerting.thresholds.critical) {
+        logger.warn('HIGH threshold must be below CRITICAL threshold');
+        return false;
+      }
+      if (alerting.thresholds.medium >= alerting.thresholds.high) {
+        logger.warn('MEDIUM threshold must be below HIGH threshold');
+        return false;
+      }
+
+      // Tier adjustments validation
+      if (alerting.tierAdjustments.active.scoreBoost < -20 || alerting.tierAdjustments.active.scoreBoost > 20) return false;
+      if (alerting.tierAdjustments.watchlist.scoreBoost < -20 || alerting.tierAdjustments.watchlist.scoreBoost > 20) return false;
+      const validPriorities = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+      if (!validPriorities.includes(alerting.tierAdjustments.active.minPriority.toUpperCase())) return false;
+      if (!validPriorities.includes(alerting.tierAdjustments.watchlist.minPriority.toUpperCase())) return false;
+
+      // Rate limits validation
+      for (const level of ['critical', 'high', 'medium', 'low'] as const) {
+        const limit = alerting.rateLimits[level];
+        if (limit.maxPerHour < 1 || limit.maxPerHour > 1000) return false;
+        if (limit.cooldownMinutes < 1 || limit.cooldownMinutes > 1440) return false; // Max 24 hours
+      }
+
+      // Quality filters validation
+      if (alerting.qualityFilters.minOpportunityScore < 0 || alerting.qualityFilters.minOpportunityScore > 100) return false;
+      if (alerting.qualityFilters.minCategoryScore < 0 || alerting.qualityFilters.minCategoryScore > 20) return false;
+      if (alerting.qualityFilters.minVolumeRatio < 0 || alerting.qualityFilters.minVolumeRatio > 10) return false;
+
       // Performance validation
       const p = config.performance;
       if (p.processing.maxConcurrentRequests < 1) return false;

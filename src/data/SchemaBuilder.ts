@@ -98,6 +98,26 @@ export class SchemaBuilder {
         FOREIGN KEY (market_id) REFERENCES markets(id)
       );
 
+      -- Alert History table
+      CREATE TABLE IF NOT EXISTS alert_history (
+        id ${d.serial()} PRIMARY KEY ${d.autoIncrement()},
+        market_id ${d.varchar(100)} NOT NULL,
+        signal_id ${d.integer()},
+        signal_type ${d.varchar(50)} NOT NULL,
+        priority ${d.varchar(20)} NOT NULL CHECK (priority IN ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW')),
+        opportunity_score ${d.decimal()},
+        adjusted_score ${d.decimal()},
+        category ${d.varchar(50)},
+        tier ${d.varchar(20)},
+        timestamp ${d.timestamp()} NOT NULL DEFAULT ${d.currentTimestamp()},
+        notification_sent ${d.boolean()} DEFAULT ${this.boolValue(false)},
+        rate_limited ${d.boolean()} DEFAULT ${this.boolValue(false)},
+        filtered_reason ${d.text()},
+        metadata ${d.jsonType()},
+        FOREIGN KEY (market_id) REFERENCES markets(id),
+        FOREIGN KEY (signal_id) REFERENCES signals(id)
+      );
+
       -- Signal Performance Tracking (P&L and Quality Metrics)
       CREATE TABLE IF NOT EXISTS signal_performance (
         id ${d.uuid()} PRIMARY KEY,
@@ -290,6 +310,14 @@ export class SchemaBuilder {
       CREATE INDEX IF NOT EXISTS idx_signals_type ON signals(signal_type);
       CREATE INDEX IF NOT EXISTS idx_signals_validated ON signals(validated, timestamp ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_signals_time ON signals(timestamp ${this.descKeyword()});
+
+      -- Alert history indexes
+      CREATE INDEX IF NOT EXISTS idx_alert_history_market_time ON alert_history(market_id, timestamp ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_alert_history_priority_time ON alert_history(priority, timestamp ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_alert_history_category_priority ON alert_history(category, priority, timestamp ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_alert_history_signal_id ON alert_history(signal_id);
+      CREATE INDEX IF NOT EXISTS idx_alert_history_notification_sent ON alert_history(notification_sent, timestamp ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_alert_history_time ON alert_history(timestamp ${this.descKeyword()});
 
       -- Signal performance indexes
       CREATE INDEX IF NOT EXISTS idx_signal_perf_signal_id ON signal_performance(signal_id);
