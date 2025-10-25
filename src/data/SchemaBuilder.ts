@@ -37,7 +37,15 @@ export class SchemaBuilder {
         tier ${d.varchar(20)},
         tier_reason ${d.text()},
         tier_priority ${d.integer()},
-        tier_updated_at ${d.timestamp()}
+        tier_updated_at ${d.timestamp()},
+
+        -- Opportunity scoring
+        opportunity_score ${d.decimal()},
+        volume_score ${d.decimal()},
+        edge_score ${d.decimal()},
+        catalyst_score ${d.decimal()},
+        quality_score ${d.decimal()},
+        score_updated_at ${d.timestamp()}
       );
 
       -- Historical prices table (time-series)
@@ -266,6 +274,8 @@ export class SchemaBuilder {
       CREATE INDEX IF NOT EXISTS idx_markets_blacklisted ON markets(is_blacklisted);
       CREATE INDEX IF NOT EXISTS idx_markets_tier ON markets(tier, tier_priority ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_markets_tier_updated ON markets(tier, tier_updated_at ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_markets_opportunity_score ON markets(opportunity_score ${this.descKeyword()}, tier);
+      CREATE INDEX IF NOT EXISTS idx_markets_score_updated ON markets(score_updated_at ${this.descKeyword()});
 
       -- Time-series data indexes
       CREATE INDEX IF NOT EXISTS idx_market_prices_market_time ON market_prices(market_id, timestamp ${this.descKeyword()});

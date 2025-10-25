@@ -26,17 +26,19 @@ export class PolymarketService {
   constructor(config: BotConfig) {
     this.config = config;
 
-    // Initialize categorizer with volume thresholds and watchlist criteria from config
+    // Initialize categorizer with full configuration from ConfigManager
     const detectionConfig = configManager.getConfig().detection;
     const volumeThresholds = detectionConfig.categoryVolumeThresholds;
     const watchlistCriteria = detectionConfig.marketTiers.watchlist;
-    this.categorizer = new MarketCategorizer(volumeThresholds, watchlistCriteria);
+    const opportunityScoringConfig = detectionConfig.opportunityScoring;
+    this.categorizer = new MarketCategorizer(volumeThresholds, watchlistCriteria, opportunityScoringConfig);
 
-    // Subscribe to config changes to update thresholds and criteria dynamically
+    // Subscribe to config changes to update all configurations dynamically
     configManager.onConfigChange('polymarket_service', (newConfig) => {
       const newDetection = newConfig.detection;
       this.categorizer.updateVolumeThresholds(newDetection.categoryVolumeThresholds);
       this.categorizer.updateWatchlistCriteria(newDetection.marketTiers.watchlist);
+      this.categorizer.updateOpportunityScoringConfig(newDetection.opportunityScoring);
     });
   }
 
@@ -85,6 +87,15 @@ export class PolymarketService {
       // Return combined ACTIVE + WATCHLIST markets (ignore IGNORED tier)
       const monitoredMarkets = [...tierResult.active, ...tierResult.watchlist];
 
+      // Calculate opportunity score statistics
+      const scores = monitoredMarkets.map(m => m.opportunityScore || 0);
+      const avgScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+      const maxScore = scores.length > 0 ? Math.max(...scores) : 0;
+      const minScore = scores.length > 0 ? Math.min(...scores) : 0;
+      const highScoreMarkets = scores.filter(s => s >= 70).length;
+      const mediumScoreMarkets = scores.filter(s => s >= 50 && s < 70).length;
+      const lowScoreMarkets = scores.filter(s => s < 50).length;
+
       // Record metrics
       const duration = Date.now() - startTime;
       metricsCollector.recordDatabaseMetrics('get_active_markets', duration, true);
@@ -92,8 +103,11 @@ export class PolymarketService {
       metricsCollector.setGauge('polymarket.active_tier_count', tierResult.active.length);
       metricsCollector.setGauge('polymarket.watchlist_tier_count', tierResult.watchlist.length);
       metricsCollector.setGauge('polymarket.ignored_tier_count', tierResult.ignored.length);
+      metricsCollector.setGauge('polymarket.avg_opportunity_score', Math.round(avgScore));
+      metricsCollector.setGauge('polymarket.max_opportunity_score', Math.round(maxScore));
+      metricsCollector.setGauge('polymarket.high_score_markets', highScoreMarkets);
 
-      advancedLogger.info(`Fetched and tiered markets`, {
+      advancedLogger.info(`Fetched and tiered markets with opportunity scoring`, {
         component: 'polymarket_service',
         operation: 'get_active_markets',
         metadata: {
@@ -103,6 +117,14 @@ export class PolymarketService {
           ignoredTier: tierResult.ignored.length,
           monitoredMarkets: monitoredMarkets.length,
           watchlistUtilization: tierResult.stats.watchlist,
+          opportunityScores: {
+            average: Math.round(avgScore * 10) / 10,
+            max: Math.round(maxScore),
+            min: Math.round(minScore),
+            highScore: highScoreMarkets,
+            mediumScore: mediumScoreMarkets,
+            lowScore: lowScoreMarkets
+          },
           durationMs: duration
         }
       });

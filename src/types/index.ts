@@ -34,6 +34,14 @@ export interface Market {
   tierReason?: string;         // Why this tier was assigned
   tierPriority?: number;       // Priority within tier (higher = more important)
   tierUpdatedAt?: number;      // When tier was last updated
+
+  // Opportunity scoring
+  opportunityScore?: number;   // Composite opportunity score (0-100)
+  volumeScore?: number;        // Volume component (0-30)
+  edgeScore?: number;          // Edge component (0-25)
+  catalystScore?: number;      // Catalyst timing component (0-25)
+  qualityScore?: number;       // Quality component (0-20)
+  scoreUpdatedAt?: number;     // When score was last calculated
 }
 
 export interface EarlySignal {

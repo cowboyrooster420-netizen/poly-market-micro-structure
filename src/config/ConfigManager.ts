@@ -60,6 +60,47 @@ export interface DetectionThresholds {
     };
   };
 
+  // Opportunity Scoring Configuration
+  opportunityScoring: {
+    enabled: boolean;                      // Enable opportunity scoring system
+
+    // Volume scoring (0-30 points): Balance liquidity vs efficiency
+    volumeScore: {
+      weight: number;                      // Weight in final score (0.3)
+      optimalVolumeMultiplier: number;     // Optimal volume = threshold * multiplier (1.5x)
+      illiquidityPenaltyThreshold: number; // Penalty below this ratio (0.3x)
+      efficiencyPenaltyThreshold: number;  // Penalty above this ratio (5.0x)
+    };
+
+    // Edge scoring (0-25 points): Information advantage
+    edgeScore: {
+      weight: number;                      // Weight in final score (0.25)
+      highEdgeCategories: Record<string, number>; // Category -> edge multiplier
+      categoryScoreWeight: number;         // How much category confidence matters (0.4)
+      multiOutcomeBonus: number;           // Bonus per outcome above 5 (0.5)
+      maxMultiOutcomeBonus: number;        // Cap on multi-outcome bonus (5.0)
+    };
+
+    // Catalyst scoring (0-25 points): Time urgency
+    catalystScore: {
+      weight: number;                      // Weight in final score (0.25)
+      optimalDaysToClose: number;          // Sweet spot days before close (4.0)
+      minDaysToClose: number;              // Too soon to act (0.5)
+      maxDaysToClose: number;              // Too far to matter (30)
+      urgencyMultiplier: number;           // Boost for closing within week (1.5)
+    };
+
+    // Market quality scoring (0-20 points): Efficiency indicators
+    qualityScore: {
+      weight: number;                      // Weight in final score (0.2)
+      spreadWeight: number;                // Wider spread = more opportunity (0.4)
+      ageWeight: number;                   // Newer markets less discovered (0.3)
+      liquidityWeight: number;             // Depth matters (0.3)
+      optimalSpreadBps: number;            // Target spread in basis points (150)
+      maxAgeDays: number;                  // Beyond this, age doesn't matter (60)
+    };
+  };
+
   // Signal Detection Thresholds
   signals: {
     volumeSpike: {
@@ -531,6 +572,56 @@ export class ConfigManager {
             maxActiveMarkets: 200             // Reasonable limit for concurrent monitoring
           }
         },
+        opportunityScoring: {
+          enabled: true,
+
+          volumeScore: {
+            weight: 0.3,                      // 30% of final score
+            optimalVolumeMultiplier: 1.5,     // Sweet spot: 1.5x category threshold
+            illiquidityPenaltyThreshold: 0.3, // Penalty if <30% of threshold
+            efficiencyPenaltyThreshold: 5.0   // Penalty if >5x threshold (too efficient)
+          },
+
+          edgeScore: {
+            weight: 0.25,                     // 25% of final score
+            highEdgeCategories: {             // Category-specific edge multipliers
+              earnings: 1.5,                  // Highest edge (small-cap mispricing)
+              ceo_changes: 1.4,               // Executive news underreacted
+              court_cases: 1.3,               // Legal outcomes have insider info
+              pardons: 1.3,                   // Rare events, political connections
+              mergers: 1.2,                   // M&A deals have deal knowledge
+              sports_awards: 1.1,             // Fan/insider knowledge
+              hollywood_awards: 1.1,          // Industry insider info
+              politics: 1.0,                  // Base edge
+              economic_data: 0.9,             // Hard to predict data releases
+              world_events: 0.9,              // Geopolitical uncertainty
+              fed: 0.8,                       // Fed highly analyzed
+              macro: 0.8,                     // Systemic events hard to time
+              crypto_events: 1.0,             // Event-based has some edge
+              uncategorized: 0.5              // Unknown category = low confidence
+            },
+            categoryScoreWeight: 0.4,         // Category confidence matters
+            multiOutcomeBonus: 0.5,           // +0.5 per outcome above 5
+            maxMultiOutcomeBonus: 5.0         // Cap at +5 total
+          },
+
+          catalystScore: {
+            weight: 0.25,                     // 25% of final score
+            optimalDaysToClose: 4.0,          // Sweet spot: 4 days before close
+            minDaysToClose: 0.5,              // <12 hours too urgent
+            maxDaysToClose: 30,               // >30 days too far
+            urgencyMultiplier: 1.5            // 1.5x bonus if closing within 7 days
+          },
+
+          qualityScore: {
+            weight: 0.2,                      // 20% of final score
+            spreadWeight: 0.4,                // Spread most important quality indicator
+            ageWeight: 0.3,                   // Age indicates discovery level
+            liquidityWeight: 0.3,             // Depth matters for execution
+            optimalSpreadBps: 150,            // 150 bps spread indicates good opportunity
+            maxAgeDays: 60                    // Beyond 60 days, age doesn't matter
+          }
+        },
         microstructure: {
           orderbookImbalance: {
             threshold: 0.3,
@@ -782,6 +873,39 @@ export class ConfigManager {
       if (!Array.isArray(tiers.watchlist.criteria.highEdgeCategories)) return false;
       if (tiers.active.monitoringIntervalMs < 10000 || tiers.active.monitoringIntervalMs > 300000) return false; // 10sec - 5min
       if (tiers.active.maxActiveMarkets < 10 || tiers.active.maxActiveMarkets > 1000) return false;
+
+      // Opportunity scoring validation
+      const scoring = d.opportunityScoring;
+      if (scoring.volumeScore.weight < 0 || scoring.volumeScore.weight > 1) return false;
+      if (scoring.volumeScore.optimalVolumeMultiplier < 1.0 || scoring.volumeScore.optimalVolumeMultiplier > 10.0) return false;
+      if (scoring.volumeScore.illiquidityPenaltyThreshold < 0.1 || scoring.volumeScore.illiquidityPenaltyThreshold > 1.0) return false;
+      if (scoring.volumeScore.efficiencyPenaltyThreshold < 2.0 || scoring.volumeScore.efficiencyPenaltyThreshold > 20.0) return false;
+
+      if (scoring.edgeScore.weight < 0 || scoring.edgeScore.weight > 1) return false;
+      if (scoring.edgeScore.categoryScoreWeight < 0 || scoring.edgeScore.categoryScoreWeight > 1) return false;
+      if (scoring.edgeScore.multiOutcomeBonus < 0 || scoring.edgeScore.multiOutcomeBonus > 2) return false;
+      if (scoring.edgeScore.maxMultiOutcomeBonus < 0 || scoring.edgeScore.maxMultiOutcomeBonus > 20) return false;
+
+      if (scoring.catalystScore.weight < 0 || scoring.catalystScore.weight > 1) return false;
+      if (scoring.catalystScore.optimalDaysToClose < 0.5 || scoring.catalystScore.optimalDaysToClose > 30) return false;
+      if (scoring.catalystScore.minDaysToClose < 0.1 || scoring.catalystScore.minDaysToClose > 7) return false;
+      if (scoring.catalystScore.maxDaysToClose < 7 || scoring.catalystScore.maxDaysToClose > 365) return false;
+      if (scoring.catalystScore.urgencyMultiplier < 1.0 || scoring.catalystScore.urgencyMultiplier > 5.0) return false;
+
+      if (scoring.qualityScore.weight < 0 || scoring.qualityScore.weight > 1) return false;
+      if (scoring.qualityScore.spreadWeight < 0 || scoring.qualityScore.spreadWeight > 1) return false;
+      if (scoring.qualityScore.ageWeight < 0 || scoring.qualityScore.ageWeight > 1) return false;
+      if (scoring.qualityScore.liquidityWeight < 0 || scoring.qualityScore.liquidityWeight > 1) return false;
+      if (scoring.qualityScore.optimalSpreadBps < 10 || scoring.qualityScore.optimalSpreadBps > 1000) return false;
+      if (scoring.qualityScore.maxAgeDays < 1 || scoring.qualityScore.maxAgeDays > 365) return false;
+
+      // Validate weights sum approximately to 1.0 (allow 0.95-1.05 for rounding)
+      const totalWeight = scoring.volumeScore.weight + scoring.edgeScore.weight +
+                          scoring.catalystScore.weight + scoring.qualityScore.weight;
+      if (totalWeight < 0.95 || totalWeight > 1.05) {
+        logger.warn(`Opportunity score weights don't sum to 1.0: ${totalWeight}`);
+        return false;
+      }
       
       // Performance validation
       const p = config.performance;

@@ -52,6 +52,53 @@ export interface WatchlistCriteria {
   };
 }
 
+export interface OpportunityScore {
+  total: number;              // Final composite score (0-100)
+  volumeScore: number;        // Volume component (0-30)
+  edgeScore: number;          // Information edge component (0-25)
+  catalystScore: number;      // Catalyst timing component (0-25)
+  qualityScore: number;       // Market quality component (0-20)
+  breakdown: {
+    volumeRatio: number;      // Actual / threshold volume
+    edgeMultiplier: number;   // Category edge multiplier
+    daysToClose: number;      // Days until market closes
+    spreadBps: number;        // Spread in basis points
+    marketAgeDays: number;    // Market age in days
+  };
+}
+
+export interface OpportunityScoringConfig {
+  enabled: boolean;
+  volumeScore: {
+    weight: number;
+    optimalVolumeMultiplier: number;
+    illiquidityPenaltyThreshold: number;
+    efficiencyPenaltyThreshold: number;
+  };
+  edgeScore: {
+    weight: number;
+    highEdgeCategories: Record<string, number>;
+    categoryScoreWeight: number;
+    multiOutcomeBonus: number;
+    maxMultiOutcomeBonus: number;
+  };
+  catalystScore: {
+    weight: number;
+    optimalDaysToClose: number;
+    minDaysToClose: number;
+    maxDaysToClose: number;
+    urgencyMultiplier: number;
+  };
+  qualityScore: {
+    weight: number;
+    spreadWeight: number;
+    ageWeight: number;
+    liquidityWeight: number;
+    optimalSpreadBps: number;
+    maxAgeDays: number;
+  };
+}
+
 /**
  * MarketCategorizer - Detects market categories based on keyword matching
  * and applies category-specific volume thresholds
@@ -62,6 +109,7 @@ export interface WatchlistCriteria {
 export class MarketCategorizer {
   private volumeThresholds: Record<string, number>;
   private watchlistCriteria: WatchlistCriteria;
+  private opportunityScoringConfig: OpportunityScoringConfig;
   private readonly categoryKeywords: Record<string, string[]> = {
     politics: [
       'election', 'president', 'senate', 'congress', 'governor',
@@ -173,9 +221,13 @@ export class MarketCategorizer {
   ];
 
   /**
-   * Initialize the categorizer with volume thresholds and watchlist criteria
+   * Initialize the categorizer with volume thresholds, watchlist criteria, and scoring config
    */
-  constructor(volumeThresholds?: Record<string, number>, watchlistCriteria?: WatchlistCriteria) {
+  constructor(
+    volumeThresholds?: Record<string, number>,
+    watchlistCriteria?: WatchlistCriteria,
+    opportunityScoringConfig?: OpportunityScoringConfig
+  ) {
     // Default volume thresholds if not provided
     this.volumeThresholds = volumeThresholds || {
       earnings: 2000,
@@ -208,6 +260,54 @@ export class MarketCategorizer {
         requireMultipleSignals: true
       }
     };
+
+    // Default opportunity scoring config if not provided
+    this.opportunityScoringConfig = opportunityScoringConfig || {
+      enabled: true,
+      volumeScore: {
+        weight: 0.3,
+        optimalVolumeMultiplier: 1.5,
+        illiquidityPenaltyThreshold: 0.3,
+        efficiencyPenaltyThreshold: 5.0
+      },
+      edgeScore: {
+        weight: 0.25,
+        highEdgeCategories: {
+          earnings: 1.5,
+          ceo_changes: 1.4,
+          court_cases: 1.3,
+          pardons: 1.3,
+          mergers: 1.2,
+          sports_awards: 1.1,
+          hollywood_awards: 1.1,
+          politics: 1.0,
+          economic_data: 0.9,
+          world_events: 0.9,
+          fed: 0.8,
+          macro: 0.8,
+          crypto_events: 1.0,
+          uncategorized: 0.5
+        },
+        categoryScoreWeight: 0.4,
+        multiOutcomeBonus: 0.5,
+        maxMultiOutcomeBonus: 5.0
+      },
+      catalystScore: {
+        weight: 0.25,
+        optimalDaysToClose: 4.0,
+        minDaysToClose: 0.5,
+        maxDaysToClose: 30,
+        urgencyMultiplier: 1.5
+      },
+      qualityScore: {
+        weight: 0.2,
+        spreadWeight: 0.4,
+        ageWeight: 0.3,
+        liquidityWeight: 0.3,
+        optimalSpreadBps: 150,
+        maxAgeDays: 60
+      }
+    };
   }
 
   /**
@@ -231,6 +331,18 @@ export class MarketCategorizer {
       component: 'market_categorizer',
       operation: 'update_watchlist_criteria',
       metadata: { criteria }
+    });
+  }
+
+  /**
+   * Update opportunity scoring config (used when config changes)
+   */
+  updateOpportunityScoringConfig(config: OpportunityScoringConfig): void {
+    this.opportunityScoringConfig = { ...config };
+    advancedLogger.info('Opportunity scoring config updated', {
+      component: 'market_categorizer',
+      operation: 'update_opportunity_scoring_config',
+      metadata: { config }
     });
   }
 
@@ -507,6 +619,205 @@ export class MarketCategorizer {
   }
 
   /**
+   * Calculate opportunity score for a market (0-100 scale)
+   * Combines volume, edge, catalyst timing, and market quality
+   */
+  calculateOpportunityScore(market: Market): OpportunityScore {
+    if (!this.opportunityScoringConfig.enabled) {
+      return {
+        total: 50,
+        volumeScore: 0,
+        edgeScore: 0,
+        catalystScore: 0,
+        qualityScore: 0,
+        breakdown: {
+          volumeRatio: 0,
+          edgeMultiplier: 0,
+          daysToClose: 0,
+          spreadBps: 0,
+          marketAgeDays: 0
+        }
+      };
+    }
+
+    const category = market.category || 'uncategorized';
+    const volume = market.volumeNum || 0;
+    const categoryScore = market.categoryScore || 0;
+    const outcomeCount = market.outcomeCount || 2;
+    const spread = market.spread || 0;
+    const marketAge = market.marketAge || 0;
+    const timeToClose = market.timeToClose || Infinity;
+
+    const threshold = this.volumeThresholds[category] || this.volumeThresholds.uncategorized;
+    const volumeRatio = volume / threshold;
+    const daysToClose = timeToClose / (1000 * 60 * 60 * 24);
+    const marketAgeDays = marketAge / (1000 * 60 * 60 * 24);
+
+    // Component 1: Volume Score (0-30)
+    const volumeScore = this.calculateVolumeScore(volumeRatio);
+
+    // Component 2: Edge Score (0-25)
+    const edgeScore = this.calculateEdgeScore(category, categoryScore, outcomeCount);
+
+    // Component 3: Catalyst Score (0-25)
+    const catalystScore = this.calculateCatalystScore(daysToClose);
+
+    // Component 4: Quality Score (0-20)
+    const qualityScore = this.calculateQualityScore(spread, marketAgeDays, volumeRatio);
+
+    // Combine into total (0-100)
+    const total = Math.round(volumeScore + edgeScore + catalystScore + qualityScore);
+
+    const edgeMultiplier = this.opportunityScoringConfig.edgeScore.highEdgeCategories[category] || 0.5;
+
+    return {
+      total: Math.min(100, Math.max(0, total)),
+      volumeScore: Math.round(volumeScore * 10) / 10,
+      edgeScore: Math.round(edgeScore * 10) / 10,
+      catalystScore: Math.round(catalystScore * 10) / 10,
+      qualityScore: Math.round(qualityScore * 10) / 10,
+      breakdown: {
+        volumeRatio: Math.round(volumeRatio * 100) / 100,
+        edgeMultiplier: Math.round(edgeMultiplier * 100) / 100,
+        daysToClose: Math.round(daysToClose * 10) / 10,
+        spreadBps: Math.round(spread),
+        marketAgeDays: Math.round(marketAgeDays * 10) / 10
+      }
+    };
+  }
+
+  /**
+   * Calculate volume score (0-30): Balance liquidity vs efficiency
+   * Sweet spot: 1.5x threshold, penalties for too low or too high
+   */
+  private calculateVolumeScore(volumeRatio: number): number {
+    const config = this.opportunityScoringConfig.volumeScore;
+    const maxPoints = config.weight * 100; // 30 points
+
+    // Optimal volume: 1.5x threshold
+    const optimalRatio = config.optimalVolumeMultiplier;
+
+    // Penalize extreme illiquidity (<30% of threshold)
+    if (volumeRatio < config.illiquidityPenaltyThreshold) {
+      const penalty = (config.illiquidityPenaltyThreshold - volumeRatio) / config.illiquidityPenaltyThreshold;
+      return maxPoints * (1 - penalty * 0.7); // Up to 70% penalty
+    }
+
+    // Penalize extreme efficiency (>5x threshold = market too efficient)
+    if (volumeRatio > config.efficiencyPenaltyThreshold) {
+      const excess = volumeRatio - config.efficiencyPenaltyThreshold;
+      const penalty = Math.min(excess / 10, 0.5); // Up to 50% penalty
+      return maxPoints * (1 - penalty);
+    }
+
+    // Between 30% and 5x: use gaussian-like curve centered at optimal
+    const distance = Math.abs(volumeRatio - optimalRatio);
+    const normalizedDistance = distance / optimalRatio;
+    const score = Math.exp(-normalizedDistance * normalizedDistance);
+
+    return maxPoints * score;
+  }
+
+  /**
+   * Calculate edge score (0-25): Information advantage
+   * Based on category edge multiplier, category confidence, and multi-outcome bonus
+   */
+  private calculateEdgeScore(category: string, categoryScore: number, outcomeCount: number): number {
+    const config = this.opportunityScoringConfig.edgeScore;
+    const maxPoints = config.weight * 100; // 25 points
+
+    // Base edge from category
+    const edgeMultiplier = config.highEdgeCategories[category] || 0.5;
+    let score = edgeMultiplier * maxPoints;
+
+    // Category confidence factor (higher score = more confident categorization)
+    const categoryConfidence = Math.min(categoryScore / 10, 1.0);
+    score *= (0.6 + 0.4 * categoryConfidence); // Scale by 0.6-1.0 based on confidence
+
+    // Multi-outcome bonus
+    if (outcomeCount >= 5) {
+      const bonus = Math.min((outcomeCount - 4) * config.multiOutcomeBonus, config.maxMultiOutcomeBonus);
+      score += bonus;
+    }
+
+    return Math.min(score, maxPoints);
+  }
+
+  /**
+   * Calculate catalyst score (0-25): Time urgency
+   * Sweet spot: 4 days before close, penalties for too soon or too far
+   */
+  private calculateCatalystScore(daysToClose: number): number {
+    const config = this.opportunityScoringConfig.catalystScore;
+    const maxPoints = config.weight * 100; // 25 points
+
+    // Too soon to act (<12 hours)
+    if (daysToClose < config.minDaysToClose) {
+      return maxPoints * 0.3; // 30% score if too urgent
+    }
+
+    // Too far to matter (>30 days)
+    if (daysToClose > config.maxDaysToClose) {
+      const decay = Math.exp(-(daysToClose - config.maxDaysToClose) / 30);
+      return maxPoints * 0.5 * decay; // Decay from 50%
+    }
+
+    // Sweet spot: gaussian curve centered at optimal (4 days)
+    const distance = Math.abs(daysToClose - config.optimalDaysToClose);
+    const sigma = config.optimalDaysToClose / 2; // Standard deviation
+    const gaussian = Math.exp(-(distance * distance) / (2 * sigma * sigma));
+    let score = maxPoints * gaussian;
+
+    // Urgency multiplier for markets closing within 7 days
+    if (daysToClose <= 7) {
+      score *= config.urgencyMultiplier;
+      score = Math.min(score, maxPoints); // Cap at max
+    }
+
+    return score;
+  }
+
+  /**
+   * Calculate quality score (0-20): Market efficiency indicators
+   * Based on spread, market age, and liquidity depth
+   */
+  private calculateQualityScore(spreadBps: number, marketAgeDays: number, volumeRatio: number): number {
+    const config = this.opportunityScoringConfig.qualityScore;
+    const maxPoints = config.weight * 100; // 20 points
+
+    // Spread component: wider spread = more opportunity
+    // Optimal: 150 bps spread
+    const spreadDistance = Math.abs(spreadBps - config.optimalSpreadBps);
+    const spreadScore = Math.exp(-spreadDistance / 100) * config.spreadWeight * maxPoints;
+
+    // Age component: newer = less discovered
+    // Markets <7 days old get bonus, decay after 60 days
+    let ageScore: number;
+    if (marketAgeDays < 7) {
+      ageScore = config.ageWeight * maxPoints; // Full points for new markets
+    } else if (marketAgeDays < config.maxAgeDays) {
+      const ageFactor = 1 - (marketAgeDays - 7) / (config.maxAgeDays - 7);
+      ageScore = ageFactor * config.ageWeight * maxPoints;
+    } else {
+      ageScore = 0; // No age bonus for old markets
+    }
+
+    // Liquidity component: decent liquidity (but not too much)
+    // Best: 0.5x - 3x threshold
+    let liquidityScore: number;
+    if (volumeRatio >= 0.5 && volumeRatio <= 3.0) {
+      liquidityScore = config.liquidityWeight * maxPoints;
+    } else if (volumeRatio < 0.5) {
+      liquidityScore = (volumeRatio / 0.5) * config.liquidityWeight * maxPoints;
+    } else {
+      const penalty = Math.min((volumeRatio - 3.0) / 10, 0.7);
+      liquidityScore = (1 - penalty) * config.liquidityWeight * maxPoints;
+    }
+
+    return spreadScore + ageScore + liquidityScore;
+  }
+
+  /**
    * Assign tier to a market based on volume and watchlist criteria
    */
   assignTier(market: Market): TierAssignment {
@@ -652,10 +963,22 @@ export class MarketCategorizer {
     for (const market of markets) {
       const assignment = this.assignTier(market);
 
+      // Calculate opportunity score for the market
+      const oppScore = this.calculateOpportunityScore(market);
+
       // Attach tier info to market
       market.tier = assignment.tier;
       market.tierReason = assignment.reason;
       market.tierPriority = assignment.priority;
+      market.tierUpdatedAt = Date.now();
+
+      // Attach opportunity score to market
+      market.opportunityScore = oppScore.total;
+      market.volumeScore = oppScore.volumeScore;
+      market.edgeScore = oppScore.edgeScore;
+      market.catalystScore = oppScore.catalystScore;
+      market.qualityScore = oppScore.qualityScore;
+      market.scoreUpdatedAt = Date.now();
 
       // Sort into tier buckets
       switch (assignment.tier) {
