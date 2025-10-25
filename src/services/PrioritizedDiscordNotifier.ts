@@ -288,7 +288,7 @@ export class PrioritizedDiscordNotifier {
     });
 
     // Current Prices (if available)
-    if (market.outcomePrices && market.outcomes) {
+    if (market.outcomePrices && market.outcomes && Array.isArray(market.outcomes)) {
       const priceStr = market.outcomes
         .slice(0, 5) // Max 5 outcomes to avoid overflow
         .map((outcome, i) => {
