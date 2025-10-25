@@ -70,6 +70,21 @@ export class AlertManager {
         operation: 'config_update'
       });
     });
+
+    // Schedule hourly cleanup to prevent memory leaks
+    setInterval(() => {
+      this.cleanupHistory(); // Also cleans expired cooldowns
+      advancedLogger.info('Alert manager cleanup completed', {
+        component: 'alert_manager',
+        operation: 'cleanup',
+        metadata: {
+          historySize: this.alertHistory.size,
+          cooldownMapsSize: this.marketCooldowns.size
+        }
+      });
+    }, 60 * 60 * 1000); // Run every hour
+
+    logger.info('Alert Manager initialized with automated cleanup');
   }
 
   /**

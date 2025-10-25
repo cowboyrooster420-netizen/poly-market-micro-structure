@@ -118,6 +118,19 @@ export class SchemaBuilder {
         FOREIGN KEY (signal_id) REFERENCES signals(id)
       );
 
+      -- System Alerts (Error/Warning/Critical system events)
+      CREATE TABLE IF NOT EXISTS system_alerts (
+        id ${d.serial()} PRIMARY KEY ${d.autoIncrement()},
+        name ${d.varchar(100)} NOT NULL,
+        level ${d.varchar(20)} NOT NULL CHECK (level IN ('warn', 'error', 'critical')),
+        message ${d.text()} NOT NULL,
+        component ${d.varchar(100)},
+        operation ${d.varchar(100)},
+        context ${d.jsonType()},
+        timestamp ${d.varchar(50)} NOT NULL,
+        created_at ${d.timestamp()} DEFAULT ${d.currentTimestamp()}
+      );
+
       -- Signal Performance Tracking (P&L and Quality Metrics)
       CREATE TABLE IF NOT EXISTS signal_performance (
         id ${d.uuid()} PRIMARY KEY,
@@ -318,6 +331,11 @@ export class SchemaBuilder {
       CREATE INDEX IF NOT EXISTS idx_alert_history_signal_id ON alert_history(signal_id);
       CREATE INDEX IF NOT EXISTS idx_alert_history_notification_sent ON alert_history(notification_sent, timestamp ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_alert_history_time ON alert_history(timestamp ${this.descKeyword()});
+
+      -- System alerts indexes
+      CREATE INDEX IF NOT EXISTS idx_system_alerts_level_time ON system_alerts(level, created_at ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_system_alerts_component ON system_alerts(component, created_at ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_system_alerts_time ON system_alerts(created_at ${this.descKeyword()});
 
       -- Signal performance indexes
       CREATE INDEX IF NOT EXISTS idx_signal_perf_signal_id ON signal_performance(signal_id);
