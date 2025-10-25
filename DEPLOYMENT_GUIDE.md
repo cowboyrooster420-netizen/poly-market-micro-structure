@@ -6,6 +6,46 @@
 
 ---
 
+## ⚠️ EXISTING DATABASE MIGRATION
+
+**IMPORTANT**: If you have an existing database from before Phases 1-6 (market categorization, opportunity scoring, etc.), you **MUST** run the migration script first.
+
+### Check if You Need Migration
+
+If you see this error when starting the bot:
+
+```
+[ERROR] Database initialization failed:
+Error: SQLITE_ERROR: no such column: category
+```
+
+You need to run the migration.
+
+### Run Migration
+
+```bash
+# Install dependencies (if not already installed)
+npm install
+
+# Run the migration
+npm run migrate
+```
+
+The migration will:
+- Create a backup in `./backups/`
+- Add 13 new columns to the `markets` table
+- Create the `system_alerts` table
+- Add database indexes for performance
+- Verify everything worked correctly
+
+See `scripts/README-MIGRATION.md` for detailed migration instructions.
+
+### Fresh Installation
+
+If this is a new installation (no existing database), skip the migration step. The database will be created automatically with the correct schema on first run.
+
+---
+
 ## 🎯 PRE-DEPLOYMENT CHECKLIST
 
 ### 1. Environment Setup

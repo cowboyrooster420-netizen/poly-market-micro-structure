@@ -26,6 +26,13 @@ build/
 logs/
 *.log
 
+# Database and backups
+data/
+backups/
+*.db
+*.db-shm
+*.db-wal
+
 # Testing
 coverage/
 .nyc_output/
