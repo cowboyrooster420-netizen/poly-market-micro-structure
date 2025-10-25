@@ -28,6 +28,12 @@ export interface Market {
   spread?: number;             // Spread in basis points
   marketAge?: number;          // Milliseconds since market creation
   timeToClose?: number;        // Milliseconds until market closes
+
+  // Two-tier monitoring system
+  tier?: MarketTier;           // ACTIVE, WATCHLIST, or IGNORED
+  tierReason?: string;         // Why this tier was assigned
+  tierPriority?: number;       // Priority within tier (higher = more important)
+  tierUpdatedAt?: number;      // When tier was last updated
 }
 
 export interface EarlySignal {

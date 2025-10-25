@@ -26,13 +26,17 @@ export class PolymarketService {
   constructor(config: BotConfig) {
     this.config = config;
 
-    // Initialize categorizer with volume thresholds from config
-    const volumeThresholds = configManager.getConfig().detection.categoryVolumeThresholds;
-    this.categorizer = new MarketCategorizer(volumeThresholds);
+    // Initialize categorizer with volume thresholds and watchlist criteria from config
+    const detectionConfig = configManager.getConfig().detection;
+    const volumeThresholds = detectionConfig.categoryVolumeThresholds;
+    const watchlistCriteria = detectionConfig.marketTiers.watchlist;
+    this.categorizer = new MarketCategorizer(volumeThresholds, watchlistCriteria);
 
-    // Subscribe to config changes to update thresholds dynamically
+    // Subscribe to config changes to update thresholds and criteria dynamically
     configManager.onConfigChange('polymarket_service', (newConfig) => {
-      this.categorizer.updateVolumeThresholds(newConfig.detection.categoryVolumeThresholds);
+      const newDetection = newConfig.detection;
+      this.categorizer.updateVolumeThresholds(newDetection.categoryVolumeThresholds);
+      this.categorizer.updateWatchlistCriteria(newDetection.marketTiers.watchlist);
     });
   }
 
@@ -75,29 +79,35 @@ export class PolymarketService {
       const marketsList = Array.isArray(markets) ? markets : [];
       const transformedMarkets = this.transformMarkets(marketsList);
 
-      // Apply category-based volume filtering
-      const filterResult = this.categorizer.filterMarketsByVolume(transformedMarkets);
-      const filteredMarkets = filterResult.passed;
+      // Apply tier assignment (categorization + volume filtering + watchlist logic)
+      const tierResult = this.categorizer.assignTiers(transformedMarkets);
+
+      // Return combined ACTIVE + WATCHLIST markets (ignore IGNORED tier)
+      const monitoredMarkets = [...tierResult.active, ...tierResult.watchlist];
 
       // Record metrics
       const duration = Date.now() - startTime;
       metricsCollector.recordDatabaseMetrics('get_active_markets', duration, true);
-      metricsCollector.setGauge('polymarket.active_markets_count', filteredMarkets.length);
-      metricsCollector.setGauge('polymarket.filtered_markets_count', filterResult.filtered.length);
+      metricsCollector.setGauge('polymarket.total_markets_fetched', transformedMarkets.length);
+      metricsCollector.setGauge('polymarket.active_tier_count', tierResult.active.length);
+      metricsCollector.setGauge('polymarket.watchlist_tier_count', tierResult.watchlist.length);
+      metricsCollector.setGauge('polymarket.ignored_tier_count', tierResult.ignored.length);
 
-      advancedLogger.info(`Fetched and filtered active markets`, {
+      advancedLogger.info(`Fetched and tiered markets`, {
         component: 'polymarket_service',
         operation: 'get_active_markets',
         metadata: {
           totalMarkets: transformedMarkets.length,
-          passedMarkets: filteredMarkets.length,
-          filteredMarkets: filterResult.filtered.length,
-          filterRate: `${((filterResult.filtered.length / transformedMarkets.length) * 100).toFixed(1)}%`,
+          activeTier: tierResult.active.length,
+          watchlistTier: tierResult.watchlist.length,
+          ignoredTier: tierResult.ignored.length,
+          monitoredMarkets: monitoredMarkets.length,
+          watchlistUtilization: tierResult.stats.watchlist,
           durationMs: duration
         }
       });
 
-      return filteredMarkets;
+      return monitoredMarkets;
     } catch (error) {
       const duration = Date.now() - startTime;
       metricsCollector.recordDatabaseMetrics('get_active_markets', duration, false);

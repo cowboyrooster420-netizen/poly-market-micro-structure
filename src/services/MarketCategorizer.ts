@@ -1,4 +1,4 @@
-import { Market } from '../types';
+import { Market, MarketTier } from '../types';
 import { logger } from '../utils/logger';
 import { advancedLogger } from '../utils/AdvancedLogger';
 
@@ -24,6 +24,34 @@ export interface VolumeFilterStats {
   byCategory: Record<string, { passed: number; filtered: number; totalVolume: number }>;
 }
 
+export interface TierAssignment {
+  tier: MarketTier;
+  reason: string;
+  watchlistSignals: string[];
+  priority: number;  // Higher = more important (for ranking within tier)
+}
+
+export interface TierStats {
+  active: number;
+  watchlist: number;
+  ignored: number;
+  watchlistByReason: Record<string, number>;
+}
+
+export interface WatchlistCriteria {
+  enabled: boolean;
+  minVolumeFloor: number;
+  maxWatchlistSize: number;
+  monitoringIntervalMs: number;
+  criteria: {
+    minCategoryScore: number;
+    minOutcomeCount: number;
+    maxDaysToClose: number;
+    highEdgeCategories: string[];
+    requireMultipleSignals: boolean;
+  };
+}
+
 /**
  * MarketCategorizer - Detects market categories based on keyword matching
  * and applies category-specific volume thresholds
@@ -33,6 +61,7 @@ export interface VolumeFilterStats {
  */
 export class MarketCategorizer {
   private volumeThresholds: Record<string, number>;
+  private watchlistCriteria: WatchlistCriteria;
   private readonly categoryKeywords: Record<string, string[]> = {
     politics: [
       'election', 'president', 'senate', 'congress', 'governor',
@@ -144,9 +173,9 @@ export class MarketCategorizer {
   ];
 
   /**
-   * Initialize the categorizer with volume thresholds
+   * Initialize the categorizer with volume thresholds and watchlist criteria
    */
-  constructor(volumeThresholds?: Record<string, number>) {
+  constructor(volumeThresholds?: Record<string, number>, watchlistCriteria?: WatchlistCriteria) {
     // Default volume thresholds if not provided
     this.volumeThresholds = volumeThresholds || {
       earnings: 2000,
@@ -164,6 +193,21 @@ export class MarketCategorizer {
       macro: 10000,
       uncategorized: 15000
     };
+
+    // Default watchlist criteria if not provided
+    this.watchlistCriteria = watchlistCriteria || {
+      enabled: true,
+      minVolumeFloor: 500,
+      maxWatchlistSize: 100,
+      monitoringIntervalMs: 300000,
+      criteria: {
+        minCategoryScore: 3,
+        minOutcomeCount: 5,
+        maxDaysToClose: 14,
+        highEdgeCategories: ['earnings', 'ceo_changes', 'court_cases', 'pardons'],
+        requireMultipleSignals: true
+      }
+    };
   }
 
   /**
@@ -175,6 +219,18 @@ export class MarketCategorizer {
       component: 'market_categorizer',
       operation: 'update_volume_thresholds',
       metadata: { thresholds }
+    });
+  }
+
+  /**
+   * Update watchlist criteria (used when config changes)
+   */
+  updateWatchlistCriteria(criteria: WatchlistCriteria): void {
+    this.watchlistCriteria = { ...criteria };
+    advancedLogger.info('Watchlist criteria updated', {
+      component: 'market_categorizer',
+      operation: 'update_watchlist_criteria',
+      metadata: { criteria }
     });
   }
 
@@ -448,6 +504,220 @@ export class MarketCategorizer {
    */
   getVolumeThresholds(): Record<string, number> {
     return { ...this.volumeThresholds };
+  }
+
+  /**
+   * Assign tier to a market based on volume and watchlist criteria
+   */
+  assignTier(market: Market): TierAssignment {
+    const category = market.category || 'uncategorized';
+    const volume = market.volumeNum || 0;
+    const categoryScore = market.categoryScore || 0;
+    const outcomeCount = market.outcomeCount || 2;
+    const timeToClose = market.timeToClose || Infinity;
+    const daysToClose = timeToClose / (1000 * 60 * 60 * 24);
+
+    // Blacklisted markets are always ignored
+    if (market.isBlacklisted) {
+      return {
+        tier: MarketTier.IGNORED,
+        reason: 'Blacklisted (price prediction or non-event-based)',
+        watchlistSignals: [],
+        priority: 0
+      };
+    }
+
+    // Markets below absolute minimum volume floor are ignored
+    if (volume < this.watchlistCriteria.minVolumeFloor) {
+      return {
+        tier: MarketTier.IGNORED,
+        reason: `Volume $${volume.toFixed(0)} below absolute minimum floor $${this.watchlistCriteria.minVolumeFloor}`,
+        watchlistSignals: [],
+        priority: 0
+      };
+    }
+
+    // Check if market meets volume threshold for active tier
+    const requiredVolume = this.volumeThresholds[category] || this.volumeThresholds.uncategorized;
+    if (volume >= requiredVolume) {
+      return {
+        tier: MarketTier.ACTIVE,
+        reason: `Volume $${volume.toFixed(0)} meets threshold $${requiredVolume} for ${category}`,
+        watchlistSignals: [],
+        priority: this.calculatePriority(market, volume, requiredVolume)
+      };
+    }
+
+    // Market didn't meet volume threshold - evaluate for watchlist
+    if (!this.watchlistCriteria.enabled) {
+      return {
+        tier: MarketTier.IGNORED,
+        reason: `Volume $${volume.toFixed(0)} below threshold $${requiredVolume}, watchlist disabled`,
+        watchlistSignals: [],
+        priority: 0
+      };
+    }
+
+    // Evaluate watchlist signals
+    const watchlistSignals: string[] = [];
+    const criteria = this.watchlistCriteria.criteria;
+
+    // Signal 1: High category score (strong keyword match)
+    if (categoryScore >= criteria.minCategoryScore) {
+      watchlistSignals.push(`Strong category match (score: ${categoryScore})`);
+    }
+
+    // Signal 2: Multi-outcome market
+    if (outcomeCount >= criteria.minOutcomeCount) {
+      watchlistSignals.push(`Multi-outcome market (${outcomeCount} outcomes)`);
+    }
+
+    // Signal 3: Closing soon (catalyst approaching)
+    if (daysToClose <= criteria.maxDaysToClose) {
+      watchlistSignals.push(`Closing soon (${daysToClose.toFixed(1)} days)`);
+    }
+
+    // Signal 4: High-edge category
+    if (criteria.highEdgeCategories.includes(category)) {
+      watchlistSignals.push(`High-edge category (${category})`);
+    }
+
+    // Decide watchlist eligibility
+    const minSignalsRequired = criteria.requireMultipleSignals ? 2 : 1;
+    if (watchlistSignals.length >= minSignalsRequired) {
+      return {
+        tier: MarketTier.WATCHLIST,
+        reason: `${watchlistSignals.length} watchlist signals met`,
+        watchlistSignals,
+        priority: this.calculatePriority(market, volume, requiredVolume, watchlistSignals.length)
+      };
+    }
+
+    // No signals met - ignore
+    return {
+      tier: MarketTier.IGNORED,
+      reason: `Only ${watchlistSignals.length}/${minSignalsRequired} watchlist signals (volume $${volume.toFixed(0)} < $${requiredVolume})`,
+      watchlistSignals: [],
+      priority: 0
+    };
+  }
+
+  /**
+   * Calculate priority score for a market within its tier (higher = more important)
+   */
+  private calculatePriority(market: Market, actualVolume: number, requiredVolume: number, watchlistSignals: number = 0): number {
+    let priority = 0;
+
+    // Volume factor (how far above/below threshold)
+    const volumeRatio = actualVolume / requiredVolume;
+    priority += volumeRatio * 100;
+
+    // Category score factor
+    const categoryScore = market.categoryScore || 0;
+    priority += categoryScore * 10;
+
+    // Multi-outcome bonus
+    const outcomeCount = market.outcomeCount || 2;
+    if (outcomeCount >= 5) {
+      priority += outcomeCount * 2;
+    }
+
+    // Time urgency factor (markets closing soon are higher priority)
+    const timeToClose = market.timeToClose || Infinity;
+    const daysToClose = timeToClose / (1000 * 60 * 60 * 24);
+    if (daysToClose <= 7) {
+      priority += (7 - daysToClose) * 5; // 0-35 bonus for markets closing within a week
+    }
+
+    // Watchlist signals bonus
+    priority += watchlistSignals * 15;
+
+    return Math.round(priority);
+  }
+
+  /**
+   * Assign tiers to a batch of markets and return them sorted by tier and priority
+   */
+  assignTiers(markets: Market[]): { active: Market[]; watchlist: Market[]; ignored: Market[]; stats: TierStats } {
+    const active: Market[] = [];
+    const watchlist: Market[] = [];
+    const ignored: Market[] = [];
+    const stats: TierStats = {
+      active: 0,
+      watchlist: 0,
+      ignored: 0,
+      watchlistByReason: {}
+    };
+
+    for (const market of markets) {
+      const assignment = this.assignTier(market);
+
+      // Attach tier info to market
+      market.tier = assignment.tier;
+      market.tierReason = assignment.reason;
+      market.tierPriority = assignment.priority;
+
+      // Sort into tier buckets
+      switch (assignment.tier) {
+        case MarketTier.ACTIVE:
+          active.push(market);
+          stats.active++;
+          break;
+        case MarketTier.WATCHLIST:
+          watchlist.push(market);
+          stats.watchlist++;
+
+          // Track watchlist reasons
+          const signals = assignment.watchlistSignals.length.toString();
+          stats.watchlistByReason[signals] = (stats.watchlistByReason[signals] || 0) + 1;
+          break;
+        case MarketTier.IGNORED:
+          ignored.push(market);
+          stats.ignored++;
+          break;
+      }
+
+      logger.debug(`Market assigned to ${assignment.tier} tier`, {
+        marketId: market.id,
+        question: market.question?.substring(0, 60),
+        tier: assignment.tier,
+        reason: assignment.reason,
+        priority: assignment.priority,
+        volume: market.volumeNum
+      });
+    }
+
+    // Sort by priority within each tier (highest first)
+    active.sort((a, b) => (b.tierPriority || 0) - (a.tierPriority || 0));
+    watchlist.sort((a, b) => (b.tierPriority || 0) - (a.tierPriority || 0));
+
+    // Enforce watchlist size limit
+    const maxWatchlist = this.watchlistCriteria.maxWatchlistSize;
+    if (watchlist.length > maxWatchlist) {
+      const excess = watchlist.splice(maxWatchlist);
+      excess.forEach(m => {
+        m.tier = MarketTier.IGNORED;
+        m.tierReason = 'Watchlist capacity exceeded';
+        ignored.push(m);
+      });
+      stats.watchlist = watchlist.length;
+      stats.ignored += excess.length;
+    }
+
+    advancedLogger.info('Tier assignment completed', {
+      component: 'market_categorizer',
+      operation: 'assign_tiers',
+      metadata: {
+        totalMarkets: markets.length,
+        active: stats.active,
+        watchlist: stats.watchlist,
+        ignored: stats.ignored,
+        watchlistUtilization: `${stats.watchlist}/${maxWatchlist}`,
+        watchlistSignalBreakdown: stats.watchlistByReason
+      }
+    });
+
+    return { active, watchlist, ignored, stats };
   }
 
   /**

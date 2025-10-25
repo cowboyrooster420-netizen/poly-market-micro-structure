@@ -35,6 +35,31 @@ export interface DetectionThresholds {
     uncategorized: number;       // Default for markets without category
   };
 
+  // Two-Tier Monitoring Configuration
+  marketTiers: {
+    watchlist: {
+      enabled: boolean;                    // Enable watchlist tier
+      minVolumeFloor: number;              // Absolute minimum volume for any tier ($500)
+      maxWatchlistSize: number;            // Maximum markets on watchlist (100)
+      monitoringIntervalMs: number;        // How often to check watchlist markets (300000 = 5min)
+
+      // Criteria for watchlist inclusion (markets below volume threshold)
+      criteria: {
+        minCategoryScore: number;          // Minimum keyword match score (3+)
+        minOutcomeCount: number;           // Multi-outcome markets (5+ outcomes)
+        maxDaysToClose: number;            // Markets closing soon (14 days)
+        highEdgeCategories: string[];      // Categories with known edge despite low volume
+        requireMultipleSignals: boolean;   // Require 2+ watchlist signals
+      };
+    };
+
+    active: {
+      monitoringIntervalMs: number;        // Real-time monitoring interval (30000 = 30sec)
+      enableWebSocket: boolean;            // Use WebSocket for real-time updates
+      maxActiveMarkets: number;            // Maximum concurrent active markets (200)
+    };
+  };
+
   // Signal Detection Thresholds
   signals: {
     volumeSpike: {
@@ -479,6 +504,33 @@ export class ConfigManager {
           // Default for uncategorized
           uncategorized: 15000      // Conservative threshold for unknown categories
         },
+        marketTiers: {
+          watchlist: {
+            enabled: true,
+            minVolumeFloor: 500,              // Don't monitor markets with <$500 volume
+            maxWatchlistSize: 100,            // Cap at 100 watchlist markets
+            monitoringIntervalMs: 300000,     // Check every 5 minutes
+
+            criteria: {
+              minCategoryScore: 3,            // Strong category match (3+ keywords)
+              minOutcomeCount: 5,             // Multi-outcome markets have more edge
+              maxDaysToClose: 14,             // Markets closing within 2 weeks
+              highEdgeCategories: [           // Categories with proven edge at low volume
+                'earnings',
+                'ceo_changes',
+                'court_cases',
+                'pardons'
+              ],
+              requireMultipleSignals: true    // Need 2+ signals for watchlist
+            }
+          },
+
+          active: {
+            monitoringIntervalMs: 30000,      // Real-time checks every 30 seconds
+            enableWebSocket: true,            // Use WebSocket for active markets
+            maxActiveMarkets: 200             // Reasonable limit for concurrent monitoring
+          }
+        },
         microstructure: {
           orderbookImbalance: {
             threshold: 0.3,
@@ -718,6 +770,18 @@ export class ConfigManager {
           return false;
         }
       }
+
+      // Market tiers validation
+      const tiers = d.marketTiers;
+      if (tiers.watchlist.minVolumeFloor < 0 || tiers.watchlist.minVolumeFloor > 10000) return false;
+      if (tiers.watchlist.maxWatchlistSize < 10 || tiers.watchlist.maxWatchlistSize > 1000) return false;
+      if (tiers.watchlist.monitoringIntervalMs < 60000 || tiers.watchlist.monitoringIntervalMs > 3600000) return false; // 1min - 1hr
+      if (tiers.watchlist.criteria.minCategoryScore < 1 || tiers.watchlist.criteria.minCategoryScore > 10) return false;
+      if (tiers.watchlist.criteria.minOutcomeCount < 2 || tiers.watchlist.criteria.minOutcomeCount > 20) return false;
+      if (tiers.watchlist.criteria.maxDaysToClose < 1 || tiers.watchlist.criteria.maxDaysToClose > 365) return false;
+      if (!Array.isArray(tiers.watchlist.criteria.highEdgeCategories)) return false;
+      if (tiers.active.monitoringIntervalMs < 10000 || tiers.active.monitoringIntervalMs > 300000) return false; // 10sec - 5min
+      if (tiers.active.maxActiveMarkets < 10 || tiers.active.maxActiveMarkets > 1000) return false;
       
       // Performance validation
       const p = config.performance;
