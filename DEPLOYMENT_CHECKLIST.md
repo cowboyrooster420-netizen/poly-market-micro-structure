@@ -53,6 +53,32 @@ Use this checklist to ensure a smooth deployment to production.
   # Should see compiled JavaScript files
   ```
 
+### ✅ Database Migration (if upgrading from old version)
+
+- [ ] **Check if migration needed**
+  ```bash
+  # If data/polymarket.db exists, you may need migration
+  ls -lh data/polymarket.db
+  ```
+
+- [ ] **Run migration** (if database exists from before Phases 1-6)
+  ```bash
+  npm run migrate
+  # Creates backup in ./backups/ before migrating
+  # Adds 13 new columns to markets table
+  # Creates system_alerts table
+  # Creates performance indexes
+  ```
+
+- [ ] **Verify migration success**
+  - [ ] Should see: "✅ Migration completed successfully!"
+  - [ ] Backup created in `./backups/` directory
+  - [ ] No error messages
+
+- [ ] **Skip if fresh installation**
+  - [ ] If no existing database, skip migration
+  - [ ] Schema will be created automatically on first run
+
 ### ✅ Configuration Validation
 
 - [ ] **Check detection config exists**
