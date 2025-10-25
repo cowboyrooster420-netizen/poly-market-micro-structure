@@ -672,6 +672,34 @@ export class EarlyBot {
     }
   }
 
+  /**
+   * Send test notifications at all priority levels
+   */
+  async sendTestPrioritizedNotifications(): Promise<void> {
+    if (!this.config.discord.webhookUrl) {
+      logger.warn('Discord webhook not configured, skipping test notifications');
+      return;
+    }
+
+    try {
+      logger.info('Sending test notifications for all priority levels...');
+      const results = await this.prioritizedNotifier.sendTestNotifications();
+
+      // Log results
+      for (const [priority, success] of Object.entries(results)) {
+        if (success) {
+          logger.info(`✅ ${priority} priority test notification sent successfully`);
+        } else {
+          logger.error(`❌ ${priority} priority test notification failed`);
+        }
+      }
+
+      logger.info('Test notifications complete');
+    } catch (error) {
+      logger.error('Error sending test notifications:', error);
+    }
+  }
+
   // Public methods for external control
   async addMarket(marketId: string): Promise<void> {
     // Try to get market details to extract asset IDs
