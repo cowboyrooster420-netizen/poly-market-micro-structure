@@ -4,6 +4,7 @@ import { advancedLogger } from '../utils/AdvancedLogger';
 import { metricsCollector } from '../monitoring/MetricsCollector';
 import { polymarketRateLimiter } from '../utils/RateLimiter';
 import { MarketCategorizer } from './MarketCategorizer';
+import { configManager } from '../config/ConfigManager';
 
 // Helper function to add timeout to fetch requests
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = 10000): Promise<Response> {
@@ -24,7 +25,15 @@ export class PolymarketService {
 
   constructor(config: BotConfig) {
     this.config = config;
-    this.categorizer = new MarketCategorizer();
+
+    // Initialize categorizer with volume thresholds from config
+    const volumeThresholds = configManager.getConfig().detection.categoryVolumeThresholds;
+    this.categorizer = new MarketCategorizer(volumeThresholds);
+
+    // Subscribe to config changes to update thresholds dynamically
+    configManager.onConfigChange('polymarket_service', (newConfig) => {
+      this.categorizer.updateVolumeThresholds(newConfig.detection.categoryVolumeThresholds);
+    });
   }
 
   async initialize(): Promise<void> {
@@ -41,7 +50,7 @@ export class PolymarketService {
 
   async getActiveMarkets(): Promise<Market[]> {
     const startTime = Date.now();
-    
+
     try {
       // Use Gamma API for active markets with rate limiting
       const response = await advancedLogger.timeOperation(
@@ -61,32 +70,43 @@ export class PolymarketService {
       }
 
       const markets: any = await response.json();
-      
+
       // Gamma API returns array directly, already filtered for active/open markets
       const marketsList = Array.isArray(markets) ? markets : [];
       const transformedMarkets = this.transformMarkets(marketsList);
-      
+
+      // Apply category-based volume filtering
+      const filterResult = this.categorizer.filterMarketsByVolume(transformedMarkets);
+      const filteredMarkets = filterResult.passed;
+
       // Record metrics
       const duration = Date.now() - startTime;
       metricsCollector.recordDatabaseMetrics('get_active_markets', duration, true);
-      metricsCollector.setGauge('polymarket.active_markets_count', transformedMarkets.length);
-      
-      advancedLogger.info(`Fetched ${transformedMarkets.length} active markets`, {
+      metricsCollector.setGauge('polymarket.active_markets_count', filteredMarkets.length);
+      metricsCollector.setGauge('polymarket.filtered_markets_count', filterResult.filtered.length);
+
+      advancedLogger.info(`Fetched and filtered active markets`, {
         component: 'polymarket_service',
         operation: 'get_active_markets',
-        metadata: { marketCount: transformedMarkets.length, durationMs: duration }
+        metadata: {
+          totalMarkets: transformedMarkets.length,
+          passedMarkets: filteredMarkets.length,
+          filteredMarkets: filterResult.filtered.length,
+          filterRate: `${((filterResult.filtered.length / transformedMarkets.length) * 100).toFixed(1)}%`,
+          durationMs: duration
+        }
       });
-      
-      return transformedMarkets;
+
+      return filteredMarkets;
     } catch (error) {
       const duration = Date.now() - startTime;
       metricsCollector.recordDatabaseMetrics('get_active_markets', duration, false);
-      
+
       advancedLogger.error('Error fetching active markets', error as Error, {
         component: 'polymarket_service',
         operation: 'get_active_markets'
       });
-      
+
       throw error;
     }
   }

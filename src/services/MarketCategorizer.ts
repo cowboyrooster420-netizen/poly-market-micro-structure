@@ -1,5 +1,6 @@
 import { Market } from '../types';
 import { logger } from '../utils/logger';
+import { advancedLogger } from '../utils/AdvancedLogger';
 
 export interface CategoryResult {
   category: string | null;
@@ -8,13 +9,30 @@ export interface CategoryResult {
   matchedKeywords: string[];
 }
 
+export interface VolumeFilterResult {
+  passed: boolean;
+  requiredVolume: number;
+  actualVolume: number;
+  category: string;
+  reason?: string;
+}
+
+export interface VolumeFilterStats {
+  totalMarkets: number;
+  passedMarkets: number;
+  filteredMarkets: number;
+  byCategory: Record<string, { passed: number; filtered: number; totalVolume: number }>;
+}
+
 /**
  * MarketCategorizer - Detects market categories based on keyword matching
+ * and applies category-specific volume thresholds
  *
  * Categorizes markets into news-driven, event-based categories that have
  * information edges and clear resolution criteria.
  */
 export class MarketCategorizer {
+  private volumeThresholds: Record<string, number>;
   private readonly categoryKeywords: Record<string, string[]> = {
     politics: [
       'election', 'president', 'senate', 'congress', 'governor',
@@ -124,6 +142,41 @@ export class MarketCategorizer {
     'trading above',
     'trading below'
   ];
+
+  /**
+   * Initialize the categorizer with volume thresholds
+   */
+  constructor(volumeThresholds?: Record<string, number>) {
+    // Default volume thresholds if not provided
+    this.volumeThresholds = volumeThresholds || {
+      earnings: 2000,
+      ceo_changes: 3000,
+      pardons: 3000,
+      mergers: 5000,
+      court_cases: 5000,
+      sports_awards: 4000,
+      hollywood_awards: 4000,
+      crypto_events: 6000,
+      politics: 8000,
+      economic_data: 8000,
+      world_events: 7000,
+      fed: 10000,
+      macro: 10000,
+      uncategorized: 15000
+    };
+  }
+
+  /**
+   * Update volume thresholds (used when config changes)
+   */
+  updateVolumeThresholds(thresholds: Record<string, number>): void {
+    this.volumeThresholds = { ...thresholds };
+    advancedLogger.info('Volume thresholds updated', {
+      component: 'market_categorizer',
+      operation: 'update_volume_thresholds',
+      metadata: { thresholds }
+    });
+  }
 
   /**
    * Categorize a market based on its question text
@@ -280,6 +333,121 @@ export class MarketCategorizer {
     }
 
     return { isInvalidCrypto: false };
+  }
+
+  /**
+   * Check if a market meets the volume threshold for its category
+   */
+  checkVolumeThreshold(market: Market): VolumeFilterResult {
+    const category = market.category || 'uncategorized';
+    const actualVolume = market.volumeNum || 0;
+    const requiredVolume = this.volumeThresholds[category] || this.volumeThresholds.uncategorized;
+
+    // Blacklisted markets always fail
+    if (market.isBlacklisted) {
+      return {
+        passed: false,
+        requiredVolume,
+        actualVolume,
+        category,
+        reason: 'Market is blacklisted (price prediction or non-event-based)'
+      };
+    }
+
+    // Check volume threshold
+    const passed = actualVolume >= requiredVolume;
+
+    return {
+      passed,
+      requiredVolume,
+      actualVolume,
+      category,
+      reason: passed ? undefined : `Volume $${actualVolume.toFixed(0)} below threshold $${requiredVolume} for ${category}`
+    };
+  }
+
+  /**
+   * Filter markets based on category-specific volume thresholds
+   * Returns only markets that meet their category's volume requirement
+   */
+  filterMarketsByVolume(markets: Market[]): { passed: Market[]; filtered: Market[]; stats: VolumeFilterStats } {
+    const passed: Market[] = [];
+    const filtered: Market[] = [];
+    const stats: VolumeFilterStats = {
+      totalMarkets: markets.length,
+      passedMarkets: 0,
+      filteredMarkets: 0,
+      byCategory: {}
+    };
+
+    for (const market of markets) {
+      const result = this.checkVolumeThreshold(market);
+      const category = result.category;
+
+      // Initialize category stats if needed
+      if (!stats.byCategory[category]) {
+        stats.byCategory[category] = {
+          passed: 0,
+          filtered: 0,
+          totalVolume: 0
+        };
+      }
+
+      // Update category volume
+      stats.byCategory[category].totalVolume += result.actualVolume;
+
+      if (result.passed) {
+        passed.push(market);
+        stats.passedMarkets++;
+        stats.byCategory[category].passed++;
+      } else {
+        filtered.push(market);
+        stats.filteredMarkets++;
+        stats.byCategory[category].filtered++;
+
+        logger.debug(`Market filtered: ${result.reason}`, {
+          marketId: market.id,
+          question: market.question?.substring(0, 80),
+          category: result.category,
+          volume: result.actualVolume,
+          required: result.requiredVolume
+        });
+      }
+    }
+
+    // Log comprehensive filtering summary
+    advancedLogger.info('Volume filtering completed', {
+      component: 'market_categorizer',
+      operation: 'filter_markets_by_volume',
+      metadata: {
+        totalMarkets: stats.totalMarkets,
+        passedMarkets: stats.passedMarkets,
+        filteredMarkets: stats.filteredMarkets,
+        filterRate: `${((stats.filteredMarkets / stats.totalMarkets) * 100).toFixed(1)}%`,
+        categoryBreakdown: Object.entries(stats.byCategory).map(([cat, data]) => ({
+          category: cat,
+          passed: data.passed,
+          filtered: data.filtered,
+          avgVolume: data.totalVolume / (data.passed + data.filtered)
+        }))
+      }
+    });
+
+    return { passed, filtered, stats };
+  }
+
+  /**
+   * Get the volume threshold for a specific category
+   */
+  getVolumeThreshold(category: string): number {
+    return this.volumeThresholds[category] || this.volumeThresholds.uncategorized;
+  }
+
+  /**
+   * Get all volume thresholds
+   */
+  getVolumeThresholds(): Record<string, number> {
+    return { ...this.volumeThresholds };
   }
 
   /**

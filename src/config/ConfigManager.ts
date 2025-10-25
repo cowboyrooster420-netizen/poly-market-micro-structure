@@ -17,6 +17,24 @@ export interface DetectionThresholds {
     scoreThreshold: number;
   };
 
+  // Category-Specific Volume Thresholds
+  categoryVolumeThresholds: {
+    earnings: number;            // Small-cap earnings have edge at low volume ($2k+)
+    ceo_changes: number;         // Executive turnover markets
+    mergers: number;             // M&A markets
+    court_cases: number;         // Legal outcome markets
+    pardons: number;             // Presidential pardon markets
+    fed: number;                 // Federal Reserve / interest rate markets
+    economic_data: number;       // CPI, jobs, GDP data releases
+    politics: number;            // Elections, appointments, legislation
+    sports_awards: number;       // MVP, championships, individual awards
+    hollywood_awards: number;    // Oscars, Emmys, Golden Globes
+    world_events: number;        // Geopolitical events, wars, treaties
+    macro: number;               // Recessions, market crashes, systemic events
+    crypto_events: number;       // ETF approvals, mainnet launches, protocol events
+    uncategorized: number;       // Default for markets without category
+  };
+
   // Signal Detection Thresholds
   signals: {
     volumeSpike: {
@@ -438,6 +456,29 @@ export class ConfigManager {
           requireEventDate: true,
           scoreThreshold: 0.6
         },
+        categoryVolumeThresholds: {
+          // Low thresholds - high information edge categories
+          earnings: 2000,           // Small-cap earnings often mispriced despite low volume
+          ceo_changes: 3000,        // Executive news often underreacted
+          pardons: 3000,            // Rare events with insider info edge
+
+          // Medium thresholds - balanced edge/liquidity
+          mergers: 5000,            // M&A deals need some liquidity
+          court_cases: 5000,        // Legal outcomes, moderate interest
+          sports_awards: 4000,      // Multi-outcome markets, fan interest
+          hollywood_awards: 4000,   // Multi-outcome markets, entertainment interest
+          crypto_events: 6000,      // Event-based crypto (not price predictions)
+
+          // Higher thresholds - need liquidity for reliable signals
+          politics: 8000,           // High-profile political events
+          economic_data: 8000,      // CPI, jobs reports need volume
+          world_events: 7000,       // Geopolitical events
+          fed: 10000,               // Fed decisions are major macro events
+          macro: 10000,             // Systemic events need deep liquidity
+
+          // Default for uncategorized
+          uncategorized: 15000      // Conservative threshold for unknown categories
+        },
         microstructure: {
           orderbookImbalance: {
             threshold: 0.3,
@@ -667,6 +708,16 @@ export class ConfigManager {
       if (d.microstructure.orderbookImbalance.threshold < 0 || d.microstructure.orderbookImbalance.threshold > 1) return false;
       if (d.microstructure.orderbookImbalance.depth < 1) return false;
       if (d.microstructure.orderbookImbalance.minSpreadBps < 0) return false;
+
+      // Category volume threshold validation
+      const thresholds = d.categoryVolumeThresholds;
+      for (const category in thresholds) {
+        const value = thresholds[category as keyof typeof thresholds];
+        if (typeof value !== 'number' || value < 0 || value > 1000000) {
+          logger.warn(`Invalid volume threshold for ${category}: ${value}`);
+          return false;
+        }
+      }
       
       // Performance validation
       const p = config.performance;
