@@ -4,6 +4,7 @@ import { EnhancedPolymarketService } from '../services/EnhancedPolymarketService
 import { SignalDetector } from '../services/SignalDetector';
 import { MicrostructureDetector } from '../services/MicrostructureDetector';
 import { DiscordAlerter } from '../services/DiscordAlerter';
+import { PrioritizedDiscordNotifier } from '../services/PrioritizedDiscordNotifier';
 import { TopicClusteringEngine } from '../services/TopicClusteringEngine';
 import { SignalPerformanceTracker } from '../services/SignalPerformanceTracker';
 import { DatabaseManager } from '../data/database';
@@ -24,6 +25,7 @@ export class EarlyBot {
   private signalDetector: SignalDetector;
   private microstructureDetector: MicrostructureDetector;
   private discordAlerter: DiscordAlerter;
+  private prioritizedNotifier: PrioritizedDiscordNotifier;
   private topicClusteringEngine: TopicClusteringEngine;
   private signalPerformanceTracker: SignalPerformanceTracker;
   private isRunning = false;
@@ -69,6 +71,7 @@ export class EarlyBot {
     this.signalDetector = new SignalDetector(this.config);
     this.microstructureDetector = new MicrostructureDetector(this.config);
     this.discordAlerter = new DiscordAlerter(this.config);
+    this.prioritizedNotifier = new PrioritizedDiscordNotifier(this.config);
     this.topicClusteringEngine = new TopicClusteringEngine();
     this.signalPerformanceTracker = new SignalPerformanceTracker(this.database);
   }
@@ -516,25 +519,49 @@ export class EarlyBot {
       }
     }
 
-    // Send Discord alert
+    // Send Discord alert through prioritized notification system
     if (this.config.discord.webhookUrl) {
       try {
-        await advancedLogger.timeOperation(
-          () => this.discordAlerter.sendAlert(signal),
-          'send_discord_alert',
-          { 
+        const { sent, decision } = await advancedLogger.timeOperation(
+          () => this.prioritizedNotifier.processSignal(signal),
+          'send_prioritized_alert',
+          {
             component: 'bot',
-            operation: 'discord_notification',
+            operation: 'prioritized_notification',
             signalType: signal.signalType
           }
         );
-        
-        metricsCollector.incrementCounter('alerts.discord_sent', 1);
+
+        if (sent) {
+          advancedLogger.info(`Priority alert sent: ${decision.priority}`, {
+            component: 'bot',
+            operation: 'prioritized_notification',
+            metadata: {
+              marketId: signal.marketId,
+              priority: decision.priority,
+              score: decision.adjustedScore,
+              signalType: signal.signalType
+            }
+          });
+          metricsCollector.incrementCounter('alerts.prioritized_sent');
+        } else {
+          advancedLogger.info(`Alert filtered: ${decision.reason}`, {
+            component: 'bot',
+            operation: 'prioritized_notification',
+            metadata: {
+              marketId: signal.marketId,
+              priority: decision.priority,
+              score: decision.adjustedScore,
+              reason: decision.reason
+            }
+          });
+          metricsCollector.incrementCounter('alerts.prioritized_filtered');
+        }
       } catch (error) {
-        metricsCollector.incrementCounter('alerts.discord_errors', 1);
-        advancedLogger.error('Error sending Discord alert', error as Error, {
+        metricsCollector.incrementCounter('alerts.prioritized_errors');
+        advancedLogger.error('Error sending prioritized alert', error as Error, {
           component: 'bot',
-          operation: 'discord_notification',
+          operation: 'prioritized_notification',
           signalType: signal.signalType
         });
       }
@@ -676,7 +703,8 @@ export class EarlyBot {
     const dataHealth = await this.dataLayer.healthCheck();
     const systemHealth = healthMonitor.getSystemHealth();
     const errorStats = errorHandler.getErrorStatistics();
-    
+    const notificationStats = this.prioritizedNotifier.getStats();
+
     return {
       running: this.isRunning,
       overall: systemHealth.overall,
@@ -694,6 +722,11 @@ export class EarlyBot {
           Array.from(errorStats.circuitBreakerStates.entries())
             .map(([key, state]) => [key, state.state])
         )
+      },
+      prioritizedNotifications: {
+        configured: notificationStats.configured,
+        alertManagerStats: notificationStats.alertManagerStats,
+        rateLimitStatus: notificationStats.rateLimitStatus
       },
       trackedMarkets: this.microstructureDetector.getTrackedMarkets().length,
       discordConfigured: !!this.config.discord.webhookUrl,
