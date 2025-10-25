@@ -3,6 +3,8 @@ import { logger } from '../utils/logger';
 import { advancedLogger } from '../utils/AdvancedLogger';
 import { metricsCollector } from '../monitoring/MetricsCollector';
 import { polymarketRateLimiter } from '../utils/RateLimiter';
+import { MarketCategorizer } from './MarketCategorizer';
+import { configManager } from '../config/ConfigManager';
 
 // Helper function to add timeout to fetch requests
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = 10000): Promise<Response> {
@@ -19,9 +21,25 @@ function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: num
 
 export class PolymarketService {
   private config: BotConfig;
+  protected categorizer: MarketCategorizer;
 
   constructor(config: BotConfig) {
     this.config = config;
+
+    // Initialize categorizer with full configuration from ConfigManager
+    const detectionConfig = configManager.getConfig().detection;
+    const volumeThresholds = detectionConfig.categoryVolumeThresholds;
+    const watchlistCriteria = detectionConfig.marketTiers.watchlist;
+    const opportunityScoringConfig = detectionConfig.opportunityScoring;
+    this.categorizer = new MarketCategorizer(volumeThresholds, watchlistCriteria, opportunityScoringConfig);
+
+    // Subscribe to config changes to update all configurations dynamically
+    configManager.onConfigChange('polymarket_service', (newConfig) => {
+      const newDetection = newConfig.detection;
+      this.categorizer.updateVolumeThresholds(newDetection.categoryVolumeThresholds);
+      this.categorizer.updateWatchlistCriteria(newDetection.marketTiers.watchlist);
+      this.categorizer.updateOpportunityScoringConfig(newDetection.opportunityScoring);
+    });
   }
 
   async initialize(): Promise<void> {
@@ -38,7 +56,7 @@ export class PolymarketService {
 
   async getActiveMarkets(): Promise<Market[]> {
     const startTime = Date.now();
-    
+
     try {
       // Use Gamma API for active markets with rate limiting
       const response = await advancedLogger.timeOperation(
@@ -58,32 +76,69 @@ export class PolymarketService {
       }
 
       const markets: any = await response.json();
-      
+
       // Gamma API returns array directly, already filtered for active/open markets
       const marketsList = Array.isArray(markets) ? markets : [];
       const transformedMarkets = this.transformMarkets(marketsList);
-      
+
+      // Apply tier assignment (categorization + volume filtering + watchlist logic)
+      const tierResult = this.categorizer.assignTiers(transformedMarkets);
+
+      // Return combined ACTIVE + WATCHLIST markets (ignore IGNORED tier)
+      const monitoredMarkets = [...tierResult.active, ...tierResult.watchlist];
+
+      // Calculate opportunity score statistics
+      const scores = monitoredMarkets.map(m => m.opportunityScore || 0);
+      const avgScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+      const maxScore = scores.length > 0 ? Math.max(...scores) : 0;
+      const minScore = scores.length > 0 ? Math.min(...scores) : 0;
+      const highScoreMarkets = scores.filter(s => s >= 70).length;
+      const mediumScoreMarkets = scores.filter(s => s >= 50 && s < 70).length;
+      const lowScoreMarkets = scores.filter(s => s < 50).length;
+
       // Record metrics
       const duration = Date.now() - startTime;
       metricsCollector.recordDatabaseMetrics('get_active_markets', duration, true);
-      metricsCollector.setGauge('polymarket.active_markets_count', transformedMarkets.length);
-      
-      advancedLogger.info(`Fetched ${transformedMarkets.length} active markets`, {
+      metricsCollector.setGauge('polymarket.total_markets_fetched', transformedMarkets.length);
+      metricsCollector.setGauge('polymarket.active_tier_count', tierResult.active.length);
+      metricsCollector.setGauge('polymarket.watchlist_tier_count', tierResult.watchlist.length);
+      metricsCollector.setGauge('polymarket.ignored_tier_count', tierResult.ignored.length);
+      metricsCollector.setGauge('polymarket.avg_opportunity_score', Math.round(avgScore));
+      metricsCollector.setGauge('polymarket.max_opportunity_score', Math.round(maxScore));
+      metricsCollector.setGauge('polymarket.high_score_markets', highScoreMarkets);
+
+      advancedLogger.info(`Fetched and tiered markets with opportunity scoring`, {
         component: 'polymarket_service',
         operation: 'get_active_markets',
-        metadata: { marketCount: transformedMarkets.length, durationMs: duration }
+        metadata: {
+          totalMarkets: transformedMarkets.length,
+          activeTier: tierResult.active.length,
+          watchlistTier: tierResult.watchlist.length,
+          ignoredTier: tierResult.ignored.length,
+          monitoredMarkets: monitoredMarkets.length,
+          watchlistUtilization: tierResult.stats.watchlist,
+          opportunityScores: {
+            average: Math.round(avgScore * 10) / 10,
+            max: Math.round(maxScore),
+            min: Math.round(minScore),
+            highScore: highScoreMarkets,
+            mediumScore: mediumScoreMarkets,
+            lowScore: lowScoreMarkets
+          },
+          durationMs: duration
+        }
       });
-      
-      return transformedMarkets;
+
+      return monitoredMarkets;
     } catch (error) {
       const duration = Date.now() - startTime;
       metricsCollector.recordDatabaseMetrics('get_active_markets', duration, false);
-      
+
       advancedLogger.error('Error fetching active markets', error as Error, {
         component: 'polymarket_service',
         operation: 'get_active_markets'
       });
-      
+
       throw error;
     }
   }
@@ -153,46 +208,78 @@ export class PolymarketService {
           tokensSample: data.tokens?.[0] ? Object.keys(data.tokens[0]) : [],
         });
       }
-      
+
       // Extract asset IDs from multiple possible formats
       let assetIds: string[] = [];
-      
+
       // Format 1: tokens array with token_id
       if (data.tokens && Array.isArray(data.tokens)) {
         assetIds = data.tokens
           .map((t: any) => t.token_id || t.id || t.asset_id)
           .filter(Boolean);
       }
-      
+
       // Format 2: direct asset_id field
       if (!assetIds.length && data.asset_id) {
         assetIds = [data.asset_id];
       }
-      
+
       // Format 3: outcome_tokens array
       if (!assetIds.length && data.outcome_tokens) {
         assetIds = data.outcome_tokens.filter(Boolean);
       }
-      
+
       // Format 4: Use condition_id as fallback for WebSocket
       if (!assetIds.length && data.condition_id) {
         assetIds = [data.condition_id];
         logger.debug(`Using condition_id as asset fallback for market: ${data.condition_id}`);
       }
-      
-      return {
+
+      // Extract outcomes and prices
+      const outcomes = data.outcomes || (data.tokens ? data.tokens.map((t: any) => t.outcome) : ['Yes', 'No']);
+      const outcomePrices = this.extractPrices(data);
+
+      // Calculate spread (difference between highest and lowest price)
+      let spread: number | undefined;
+      if (outcomePrices && outcomePrices.length >= 2) {
+        const prices = outcomePrices.map(p => parseFloat(p)).filter(p => !isNaN(p));
+        if (prices.length >= 2) {
+          const maxPrice = Math.max(...prices);
+          const minPrice = Math.min(...prices);
+          spread = (maxPrice - minPrice) * 10000; // Convert to basis points
+        }
+      }
+
+      // Calculate market age
+      let marketAge: number | undefined;
+      const createdAt = data.created_at || data.createdAt;
+      if (createdAt) {
+        const createdTime = new Date(createdAt).getTime();
+        marketAge = Date.now() - createdTime;
+      }
+
+      // Calculate time to close
+      let timeToClose: number | undefined;
+      const endDate = data.end_date_iso || data.endDate;
+      if (endDate) {
+        const endTime = new Date(endDate).getTime();
+        timeToClose = endTime - Date.now();
+      }
+
+      // Build initial market object
+      const market: Market = {
         id: data.condition_id || data.id,
         question: data.question || data.title || 'Unknown Market',
         description: data.description,
-        outcomes: data.outcomes || (data.tokens ? data.tokens.map((t: any) => t.outcome) : ['Yes', 'No']),
-        outcomePrices: this.extractPrices(data),
+        outcomes,
+        outcomePrices,
         volume: data.volume || '0',
         volumeNum: parseFloat(data.volume || '0'),
         active: data.active !== undefined ? data.active : !data.closed,
         closed: data.closed || false,
-        endDate: data.end_date_iso || data.endDate,
+        endDate,
         tags: data.tags,
-        createdAt: data.created_at || data.createdAt,
+        createdAt,
         updatedAt: data.updated_at || data.updatedAt,
         // Add asset IDs for WebSocket subscriptions
         metadata: {
@@ -201,8 +288,21 @@ export class PolymarketService {
           slug: data.slug || data.market_slug,
           clobTokenIds: data.clobTokenIds,
           rawTokensData: process.env.LOG_LEVEL === 'debug' ? data.tokens : undefined,
-        }
+        },
+        // Market characteristics
+        outcomeCount: outcomes.length,
+        spread,
+        marketAge,
+        timeToClose
       };
+
+      // Apply category detection
+      const categoryResult = this.categorizer.categorize(market);
+      market.category = categoryResult.category || undefined;
+      market.categoryScore = categoryResult.categoryScore;
+      market.isBlacklisted = categoryResult.isBlacklisted;
+
+      return market;
     } catch (error) {
       logger.warn('Failed to transform market data:', error);
       return null;

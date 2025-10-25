@@ -17,6 +17,31 @@ export interface Market {
     conditionId?: string;
     [key: string]: any;
   };
+
+  // Category detection metadata
+  category?: string;           // 'earnings', 'politics', 'fed', etc.
+  categoryScore?: number;      // Confidence in category assignment (0-10+)
+  isBlacklisted?: boolean;     // True if market matches blacklist patterns
+
+  // Market characteristics for filtering
+  outcomeCount?: number;       // Number of outcomes (2, 5, 10, etc.)
+  spread?: number;             // Spread in basis points
+  marketAge?: number;          // Milliseconds since market creation
+  timeToClose?: number;        // Milliseconds until market closes
+
+  // Two-tier monitoring system
+  tier?: MarketTier;           // ACTIVE, WATCHLIST, or IGNORED
+  tierReason?: string;         // Why this tier was assigned
+  tierPriority?: number;       // Priority within tier (higher = more important)
+  tierUpdatedAt?: number;      // When tier was last updated
+
+  // Opportunity scoring
+  opportunityScore?: number;   // Composite opportunity score (0-100)
+  volumeScore?: number;        // Volume component (0-30)
+  edgeScore?: number;          // Edge component (0-25)
+  catalystScore?: number;      // Catalyst timing component (0-25)
+  qualityScore?: number;       // Quality component (0-20)
+  scoreUpdatedAt?: number;     // When score was last calculated
 }
 
 export interface EarlySignal {
@@ -244,4 +269,19 @@ export interface MarketFilterConfig {
   includeTags: string[];
   requireEventDate: boolean;
   scoreThreshold: number;
+}
+
+// Market tier for two-tier monitoring system
+export enum MarketTier {
+  ACTIVE = 'active',        // Full real-time monitoring
+  WATCHLIST = 'watchlist',  // Periodic monitoring for low-volume opportunities
+  IGNORED = 'ignored'       // Not tracked
+}
+
+// Alert priority levels for signal filtering
+export enum AlertPriority {
+  CRITICAL = 'critical',  // Top opportunities, @everyone alert
+  HIGH = 'high',          // Strong signals, regular alert
+  MEDIUM = 'medium',      // Standard signals, quiet alert
+  LOW = 'low'             // Informational only
 }

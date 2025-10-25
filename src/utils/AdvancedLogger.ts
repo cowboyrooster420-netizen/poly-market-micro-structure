@@ -1,4 +1,7 @@
 import { logger as baseLogger } from './logger';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import fetch from 'node-fetch';
 
 export interface LogContext {
   component?: string;
@@ -39,14 +42,31 @@ export class AdvancedLogger {
   private alertConfigs: Map<string, AlertConfig> = new Map();
   private alertCounts: Map<string, { count: number; resetTime: number }> = new Map();
   private contextStack: LogContext[] = [];
+  private database: any = null; // Optional database instance for alert storage
+  private alertsFilePath: string;
+  private discordWebhookUrl: string | null = null;
 
   constructor() {
     this.setupDefaultAlertConfigs();
-    
+
+    // Setup alert file path
+    this.alertsFilePath = path.join(process.cwd(), 'logs', 'alerts.log');
+
+    // Get Discord webhook from environment
+    this.discordWebhookUrl = process.env.DISCORD_WEBHOOK_URL || null;
+
     // Cleanup old metrics every 5 minutes
     setInterval(() => this.cleanupOldMetrics(), 5 * 60 * 1000);
-    
+
     baseLogger.info('Advanced logger initialized with structured logging and alerting');
+  }
+
+  /**
+   * Set database instance for alert persistence (optional)
+   */
+  setDatabase(database: any): void {
+    this.database = database;
+    baseLogger.info('Database configured for advanced logger alerts');
   }
 
   /**
@@ -462,19 +482,162 @@ export class AdvancedLogger {
     }
   }
 
-  private sendDiscordAlert(alertData: any): void {
-    // TODO: Integrate with Discord webhook
-    baseLogger.debug('Discord alert would be sent:', alertData);
+  private async sendDiscordAlert(alertData: any): Promise<void> {
+    if (!this.discordWebhookUrl) {
+      baseLogger.debug('Discord webhook not configured, skipping Discord alert');
+      return;
+    }
+
+    try {
+      const embed = {
+        title: `🚨 System Alert: ${alertData.name}`,
+        description: alertData.message,
+        color: this.getAlertColor(alertData.level),
+        fields: [
+          {
+            name: 'Level',
+            value: alertData.level.toUpperCase(),
+            inline: true
+          },
+          {
+            name: 'Timestamp',
+            value: alertData.timestamp,
+            inline: true
+          }
+        ],
+        footer: {
+          text: 'System Alert'
+        }
+      };
+
+      // Add context fields if available
+      if (alertData.context) {
+        if (alertData.context.component) {
+          embed.fields.push({
+            name: 'Component',
+            value: alertData.context.component,
+            inline: true
+          });
+        }
+        if (alertData.context.operation) {
+          embed.fields.push({
+            name: 'Operation',
+            value: alertData.context.operation,
+            inline: true
+          });
+        }
+        if (alertData.context.metadata) {
+          embed.fields.push({
+            name: 'Details',
+            value: JSON.stringify(alertData.context.metadata, null, 2).substring(0, 1024),
+            inline: false
+          });
+        }
+      }
+
+      await fetch(this.discordWebhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ embeds: [embed] })
+      });
+
+      baseLogger.debug('Discord alert sent successfully');
+    } catch (error) {
+      baseLogger.error('Failed to send Discord alert:', error);
+    }
   }
 
-  private saveAlertToDatabase(alertData: any): void {
-    // TODO: Save to database alerts table
-    baseLogger.debug('Alert would be saved to database:', alertData);
+  private async saveAlertToDatabase(alertData: any): Promise<void> {
+    if (!this.database) {
+      baseLogger.debug('Database not configured, skipping database alert storage');
+      return;
+    }
+
+    try {
+      // Save to system_alerts table
+      await this.database.query(`
+        INSERT INTO system_alerts (
+          name, level, message, component, operation, context, timestamp, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      `, [
+        alertData.name,
+        alertData.level,
+        alertData.message,
+        alertData.context?.component || null,
+        alertData.context?.operation || null,
+        JSON.stringify(alertData.context || {}),
+        alertData.timestamp
+      ]);
+
+      baseLogger.debug('Alert saved to database successfully');
+    } catch (error) {
+      baseLogger.error('Failed to save alert to database:', error);
+    }
   }
 
-  private saveAlertToFile(alertData: any): void {
-    // TODO: Append to alerts log file
-    baseLogger.debug('Alert would be saved to file:', alertData);
+  private async saveAlertToFile(alertData: any): Promise<void> {
+    try {
+      // Ensure logs directory exists
+      const logsDir = path.dirname(this.alertsFilePath);
+      await fs.mkdir(logsDir, { recursive: true });
+
+      // Format alert as JSON line
+      const alertLine = JSON.stringify(alertData) + '\n';
+
+      // Append to file
+      await fs.appendFile(this.alertsFilePath, alertLine, 'utf8');
+
+      baseLogger.debug('Alert saved to file successfully');
+
+      // Rotate file if it gets too large (>10MB)
+      const stats = await fs.stat(this.alertsFilePath);
+      if (stats.size > 10 * 1024 * 1024) {
+        await this.rotateAlertFile();
+      }
+    } catch (error) {
+      baseLogger.error('Failed to save alert to file:', error);
+    }
+  }
+
+  /**
+   * Rotate alert log file when it gets too large
+   */
+  private async rotateAlertFile(): Promise<void> {
+    try {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const rotatedPath = this.alertsFilePath.replace('.log', `.${timestamp}.log`);
+
+      await fs.rename(this.alertsFilePath, rotatedPath);
+      baseLogger.info(`Alert log file rotated to: ${rotatedPath}`);
+
+      // Keep only last 10 rotated files
+      const logsDir = path.dirname(this.alertsFilePath);
+      const files = await fs.readdir(logsDir);
+      const alertLogFiles = files
+        .filter(f => f.startsWith('alerts.') && f.endsWith('.log'))
+        .map(f => ({ name: f, path: path.join(logsDir, f) }))
+        .sort((a, b) => b.name.localeCompare(a.name));
+
+      // Delete old files beyond the limit
+      for (let i = 10; i < alertLogFiles.length; i++) {
+        await fs.unlink(alertLogFiles[i].path);
+        baseLogger.debug(`Deleted old alert log: ${alertLogFiles[i].name}`);
+      }
+    } catch (error) {
+      baseLogger.error('Failed to rotate alert file:', error);
+    }
+  }
+
+  /**
+   * Get Discord embed color for alert level
+   */
+  private getAlertColor(level: string): number {
+    const colors = {
+      warn: 0xFFAA00,      // Yellow
+      error: 0xFF6600,     // Orange
+      critical: 0xFF0000   // Red
+    };
+    return colors[level as keyof typeof colors] || 0x888888;
   }
 
   private setupDefaultAlertConfigs(): void {

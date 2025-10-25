@@ -254,6 +254,10 @@ export class DatabaseManager {
     };
   }
 
+  getProvider(): 'postgresql' | 'sqlite' | 'memory' {
+    return this.config.provider;
+  }
+
   async close(): Promise<void> {
     try {
       if (this.pgPool) {

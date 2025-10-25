@@ -24,7 +24,28 @@ export class SchemaBuilder {
         end_date ${d.timestamp()},
         created_at ${d.timestamp()} DEFAULT ${d.currentTimestamp()},
         updated_at ${d.timestamp()} DEFAULT ${d.currentTimestamp()},
-        metadata ${d.jsonType()}
+        metadata ${d.jsonType()},
+
+        -- Category detection fields
+        category ${d.varchar(50)},
+        category_score ${d.decimal()},
+        is_blacklisted ${d.boolean()} DEFAULT ${this.boolValue(false)},
+        outcome_count ${d.integer()},
+        spread ${d.decimal()},
+
+        -- Two-tier monitoring system
+        tier ${d.varchar(20)},
+        tier_reason ${d.text()},
+        tier_priority ${d.integer()},
+        tier_updated_at ${d.timestamp()},
+
+        -- Opportunity scoring
+        opportunity_score ${d.decimal()},
+        volume_score ${d.decimal()},
+        edge_score ${d.decimal()},
+        catalyst_score ${d.decimal()},
+        quality_score ${d.decimal()},
+        score_updated_at ${d.timestamp()}
       );
 
       -- Historical prices table (time-series)
@@ -75,6 +96,39 @@ export class SchemaBuilder {
         validation_time ${d.timestamp()},
         outcome ${d.boolean()},
         FOREIGN KEY (market_id) REFERENCES markets(id)
+      );
+
+      -- Alert History table
+      CREATE TABLE IF NOT EXISTS alert_history (
+        id ${d.serial()} PRIMARY KEY ${d.autoIncrement()},
+        market_id ${d.varchar(100)} NOT NULL,
+        signal_id ${d.integer()},
+        signal_type ${d.varchar(50)} NOT NULL,
+        priority ${d.varchar(20)} NOT NULL CHECK (priority IN ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW')),
+        opportunity_score ${d.decimal()},
+        adjusted_score ${d.decimal()},
+        category ${d.varchar(50)},
+        tier ${d.varchar(20)},
+        timestamp ${d.timestamp()} NOT NULL DEFAULT ${d.currentTimestamp()},
+        notification_sent ${d.boolean()} DEFAULT ${this.boolValue(false)},
+        rate_limited ${d.boolean()} DEFAULT ${this.boolValue(false)},
+        filtered_reason ${d.text()},
+        metadata ${d.jsonType()},
+        FOREIGN KEY (market_id) REFERENCES markets(id),
+        FOREIGN KEY (signal_id) REFERENCES signals(id)
+      );
+
+      -- System Alerts (Error/Warning/Critical system events)
+      CREATE TABLE IF NOT EXISTS system_alerts (
+        id ${d.serial()} PRIMARY KEY ${d.autoIncrement()},
+        name ${d.varchar(100)} NOT NULL,
+        level ${d.varchar(20)} NOT NULL CHECK (level IN ('warn', 'error', 'critical')),
+        message ${d.text()} NOT NULL,
+        component ${d.varchar(100)},
+        operation ${d.varchar(100)},
+        context ${d.jsonType()},
+        timestamp ${d.varchar(50)} NOT NULL,
+        created_at ${d.timestamp()} DEFAULT ${d.currentTimestamp()}
       );
 
       -- Signal Performance Tracking (P&L and Quality Metrics)
@@ -249,6 +303,12 @@ export class SchemaBuilder {
       CREATE INDEX IF NOT EXISTS idx_markets_active ON markets(active, volume ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_markets_volume ON markets(volume ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_markets_closed ON markets(closed);
+      CREATE INDEX IF NOT EXISTS idx_markets_category ON markets(category, volume ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_markets_blacklisted ON markets(is_blacklisted);
+      CREATE INDEX IF NOT EXISTS idx_markets_tier ON markets(tier, tier_priority ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_markets_tier_updated ON markets(tier, tier_updated_at ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_markets_opportunity_score ON markets(opportunity_score ${this.descKeyword()}, tier);
+      CREATE INDEX IF NOT EXISTS idx_markets_score_updated ON markets(score_updated_at ${this.descKeyword()});
 
       -- Time-series data indexes
       CREATE INDEX IF NOT EXISTS idx_market_prices_market_time ON market_prices(market_id, timestamp ${this.descKeyword()});
@@ -263,6 +323,19 @@ export class SchemaBuilder {
       CREATE INDEX IF NOT EXISTS idx_signals_type ON signals(signal_type);
       CREATE INDEX IF NOT EXISTS idx_signals_validated ON signals(validated, timestamp ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_signals_time ON signals(timestamp ${this.descKeyword()});
+
+      -- Alert history indexes
+      CREATE INDEX IF NOT EXISTS idx_alert_history_market_time ON alert_history(market_id, timestamp ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_alert_history_priority_time ON alert_history(priority, timestamp ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_alert_history_category_priority ON alert_history(category, priority, timestamp ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_alert_history_signal_id ON alert_history(signal_id);
+      CREATE INDEX IF NOT EXISTS idx_alert_history_notification_sent ON alert_history(notification_sent, timestamp ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_alert_history_time ON alert_history(timestamp ${this.descKeyword()});
+
+      -- System alerts indexes
+      CREATE INDEX IF NOT EXISTS idx_system_alerts_level_time ON system_alerts(level, created_at ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_system_alerts_component ON system_alerts(component, created_at ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_system_alerts_time ON system_alerts(created_at ${this.descKeyword()});
 
       -- Signal performance indexes
       CREATE INDEX IF NOT EXISTS idx_signal_perf_signal_id ON signal_performance(signal_id);
