@@ -17,6 +17,17 @@ export interface Market {
     conditionId?: string;
     [key: string]: any;
   };
+
+  // Category detection metadata
+  category?: string;           // 'earnings', 'politics', 'fed', etc.
+  categoryScore?: number;      // Confidence in category assignment (0-10+)
+  isBlacklisted?: boolean;     // True if market matches blacklist patterns
+
+  // Market characteristics for filtering
+  outcomeCount?: number;       // Number of outcomes (2, 5, 10, etc.)
+  spread?: number;             // Spread in basis points
+  marketAge?: number;          // Milliseconds since market creation
+  timeToClose?: number;        // Milliseconds until market closes
 }
 
 export interface EarlySignal {
@@ -244,4 +255,19 @@ export interface MarketFilterConfig {
   includeTags: string[];
   requireEventDate: boolean;
   scoreThreshold: number;
+}
+
+// Market tier for two-tier monitoring system
+export enum MarketTier {
+  ACTIVE = 'active',        // Full real-time monitoring
+  WATCHLIST = 'watchlist',  // Periodic monitoring for low-volume opportunities
+  IGNORED = 'ignored'       // Not tracked
+}
+
+// Alert priority levels for signal filtering
+export enum AlertPriority {
+  CRITICAL = 'critical',  // Top opportunities, @everyone alert
+  HIGH = 'high',          // Strong signals, regular alert
+  MEDIUM = 'medium',      // Standard signals, quiet alert
+  LOW = 'low'             // Informational only
 }

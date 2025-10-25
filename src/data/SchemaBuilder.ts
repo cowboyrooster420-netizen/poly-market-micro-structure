@@ -24,7 +24,14 @@ export class SchemaBuilder {
         end_date ${d.timestamp()},
         created_at ${d.timestamp()} DEFAULT ${d.currentTimestamp()},
         updated_at ${d.timestamp()} DEFAULT ${d.currentTimestamp()},
-        metadata ${d.jsonType()}
+        metadata ${d.jsonType()},
+
+        -- Category detection fields
+        category ${d.varchar(50)},
+        category_score ${d.decimal()},
+        is_blacklisted ${d.boolean()} DEFAULT ${this.boolValue(false)},
+        outcome_count ${d.integer()},
+        spread ${d.decimal()}
       );
 
       -- Historical prices table (time-series)
@@ -249,6 +256,8 @@ export class SchemaBuilder {
       CREATE INDEX IF NOT EXISTS idx_markets_active ON markets(active, volume ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_markets_volume ON markets(volume ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_markets_closed ON markets(closed);
+      CREATE INDEX IF NOT EXISTS idx_markets_category ON markets(category, volume ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_markets_blacklisted ON markets(is_blacklisted);
 
       -- Time-series data indexes
       CREATE INDEX IF NOT EXISTS idx_market_prices_market_time ON market_prices(market_id, timestamp ${this.descKeyword()});

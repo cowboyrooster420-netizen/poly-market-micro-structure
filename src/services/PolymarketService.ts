@@ -3,6 +3,7 @@ import { logger } from '../utils/logger';
 import { advancedLogger } from '../utils/AdvancedLogger';
 import { metricsCollector } from '../monitoring/MetricsCollector';
 import { polymarketRateLimiter } from '../utils/RateLimiter';
+import { MarketCategorizer } from './MarketCategorizer';
 
 // Helper function to add timeout to fetch requests
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = 10000): Promise<Response> {
@@ -19,9 +20,11 @@ function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: num
 
 export class PolymarketService {
   private config: BotConfig;
+  protected categorizer: MarketCategorizer;
 
   constructor(config: BotConfig) {
     this.config = config;
+    this.categorizer = new MarketCategorizer();
   }
 
   async initialize(): Promise<void> {
@@ -153,46 +156,78 @@ export class PolymarketService {
           tokensSample: data.tokens?.[0] ? Object.keys(data.tokens[0]) : [],
         });
       }
-      
+
       // Extract asset IDs from multiple possible formats
       let assetIds: string[] = [];
-      
+
       // Format 1: tokens array with token_id
       if (data.tokens && Array.isArray(data.tokens)) {
         assetIds = data.tokens
           .map((t: any) => t.token_id || t.id || t.asset_id)
           .filter(Boolean);
       }
-      
+
       // Format 2: direct asset_id field
       if (!assetIds.length && data.asset_id) {
         assetIds = [data.asset_id];
       }
-      
+
       // Format 3: outcome_tokens array
       if (!assetIds.length && data.outcome_tokens) {
         assetIds = data.outcome_tokens.filter(Boolean);
       }
-      
+
       // Format 4: Use condition_id as fallback for WebSocket
       if (!assetIds.length && data.condition_id) {
         assetIds = [data.condition_id];
         logger.debug(`Using condition_id as asset fallback for market: ${data.condition_id}`);
       }
-      
-      return {
+
+      // Extract outcomes and prices
+      const outcomes = data.outcomes || (data.tokens ? data.tokens.map((t: any) => t.outcome) : ['Yes', 'No']);
+      const outcomePrices = this.extractPrices(data);
+
+      // Calculate spread (difference between highest and lowest price)
+      let spread: number | undefined;
+      if (outcomePrices && outcomePrices.length >= 2) {
+        const prices = outcomePrices.map(p => parseFloat(p)).filter(p => !isNaN(p));
+        if (prices.length >= 2) {
+          const maxPrice = Math.max(...prices);
+          const minPrice = Math.min(...prices);
+          spread = (maxPrice - minPrice) * 10000; // Convert to basis points
+        }
+      }
+
+      // Calculate market age
+      let marketAge: number | undefined;
+      const createdAt = data.created_at || data.createdAt;
+      if (createdAt) {
+        const createdTime = new Date(createdAt).getTime();
+        marketAge = Date.now() - createdTime;
+      }
+
+      // Calculate time to close
+      let timeToClose: number | undefined;
+      const endDate = data.end_date_iso || data.endDate;
+      if (endDate) {
+        const endTime = new Date(endDate).getTime();
+        timeToClose = endTime - Date.now();
+      }
+
+      // Build initial market object
+      const market: Market = {
         id: data.condition_id || data.id,
         question: data.question || data.title || 'Unknown Market',
         description: data.description,
-        outcomes: data.outcomes || (data.tokens ? data.tokens.map((t: any) => t.outcome) : ['Yes', 'No']),
-        outcomePrices: this.extractPrices(data),
+        outcomes,
+        outcomePrices,
         volume: data.volume || '0',
         volumeNum: parseFloat(data.volume || '0'),
         active: data.active !== undefined ? data.active : !data.closed,
         closed: data.closed || false,
-        endDate: data.end_date_iso || data.endDate,
+        endDate,
         tags: data.tags,
-        createdAt: data.created_at || data.createdAt,
+        createdAt,
         updatedAt: data.updated_at || data.updatedAt,
         // Add asset IDs for WebSocket subscriptions
         metadata: {
@@ -201,8 +236,21 @@ export class PolymarketService {
           slug: data.slug || data.market_slug,
           clobTokenIds: data.clobTokenIds,
           rawTokensData: process.env.LOG_LEVEL === 'debug' ? data.tokens : undefined,
-        }
+        },
+        // Market characteristics
+        outcomeCount: outcomes.length,
+        spread,
+        marketAge,
+        timeToClose
       };
+
+      // Apply category detection
+      const categoryResult = this.categorizer.categorize(market);
+      market.category = categoryResult.category || undefined;
+      market.categoryScore = categoryResult.categoryScore;
+      market.isBlacklisted = categoryResult.isBlacklisted;
+
+      return market;
     } catch (error) {
       logger.warn('Failed to transform market data:', error);
       return null;
