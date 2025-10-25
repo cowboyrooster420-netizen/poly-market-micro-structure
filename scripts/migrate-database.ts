@@ -231,7 +231,7 @@ function main(): void {
   if (!fs.existsSync(DATABASE_PATH)) {
     console.log('⚠️  Database does not exist yet - will be created on first run');
     console.log('✅ No migration needed');
-    process.exit(0);
+    return; // Exit gracefully without calling process.exit()
   }
 
   let backupPath: string | null = null;
