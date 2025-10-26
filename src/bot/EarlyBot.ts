@@ -31,6 +31,7 @@ export class EarlyBot {
   private isRunning = false;
   private intervalId?: NodeJS.Timeout;
   private performanceReportInterval?: NodeJS.Timeout;
+  private pnlReportInterval?: NodeJS.Timeout;
 
   constructor() {
     // Get initial configuration from config manager
@@ -260,6 +261,26 @@ export class EarlyBot {
     //     logger.error('Error during performance report:', error);
     //   }
     // }, 30 * 60 * 1000); // Every 30 minutes
+
+    // Set up daily P&L report (every 24 hours)
+    this.pnlReportInterval = setInterval(async () => {
+      try {
+        await this.sendDailyPnLReport();
+      } catch (error) {
+        logger.error('Error during daily P&L report:', error);
+      }
+    }, 24 * 60 * 60 * 1000); // Every 24 hours
+
+    // Send initial P&L report after 5 minutes (to give time for data collection)
+    setTimeout(async () => {
+      try {
+        await this.sendDailyPnLReport();
+      } catch (error) {
+        logger.error('Error sending initial P&L report:', error);
+      }
+    }, 5 * 60 * 1000);
+
+    logger.info('Daily P&L reports scheduled (every 24 hours)');
 
     metricsCollector.incrementCounter('bot.start_success', 1);
     
@@ -657,7 +678,7 @@ export class EarlyBot {
       const stats = this.microstructureDetector.getPerformanceStats();
       const health = await this.microstructureDetector.healthCheck();
       const clusterHealth = this.topicClusteringEngine.healthCheck();
-      
+
       const report = {
         ...stats,
         healthy: health.healthy && clusterHealth.healthy,
@@ -672,6 +693,27 @@ export class EarlyBot {
       logger.info('Performance report sent');
     } catch (error) {
       logger.error('Error sending performance report:', error);
+    }
+  }
+
+  /**
+   * Send daily P&L report showing signal performance and profitability
+   */
+  private async sendDailyPnLReport(): Promise<void> {
+    try {
+      const allStats = await this.signalPerformanceTracker.getAllSignalTypeStats();
+
+      if (allStats.length === 0) {
+        logger.info('No signal performance data available yet for daily P&L report');
+        return;
+      }
+
+      if (this.config.discord.webhookUrl) {
+        await this.discordAlerter.sendPnLReport(allStats);
+        logger.info('Daily P&L report sent');
+      }
+    } catch (error) {
+      logger.error('Error sending daily P&L report:', error);
     }
   }
 
