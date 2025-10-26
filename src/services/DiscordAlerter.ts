@@ -185,10 +185,11 @@ export class DiscordAlerter {
   private async buildAlertMessage(signal: EarlySignal): Promise<AlertMessage> {
     const alertType = this.determineAlertType(signal);
     const emoji = this.EMOJIS[signal.signalType as keyof typeof this.EMOJIS] || '🔔';
+    const severityEmoji = this.getSeverityEmoji(signal.confidence, signal.metadata);
 
     return {
       type: alertType,
-      title: `${emoji} ${this.formatSignalType(signal.signalType)} Detected`,
+      title: `${severityEmoji} ${emoji} ${this.formatSignalType(signal.signalType)} Detected`,
       description: this.buildDescription(signal),
       color: this.COLORS[alertType.toUpperCase() as keyof typeof this.COLORS] || this.COLORS.INFO,
       fields: await this.buildFields(signal),
@@ -374,16 +375,40 @@ export class DiscordAlerter {
       });
     }
 
+    // Add signal strength/severity explanation
+    const severityField = this.buildSeverityExplanation(signal);
+    if (severityField) {
+      fields.push(severityField);
+    }
+
+    // Add plain English interpretation - what this signal means
+    const interpretationField = this.buildPlainEnglishInterpretation(signal);
+    if (interpretationField) {
+      fields.push(interpretationField);
+    }
+
+    // Add market health dashboard
+    const healthField = this.buildMarketHealthDashboard(signal);
+    if (healthField) {
+      fields.push(healthField);
+    }
+
     // Add direction indicator if determinable
     const directionField = this.buildDirectionIndicator(signal);
     if (directionField) {
       fields.push(directionField);
     }
 
-    // Add historical performance stats if available
-    const performanceField = await this.buildPerformanceStatsField(signal);
-    if (performanceField) {
-      fields.push(performanceField);
+    // Add "what this usually means" with historical performance
+    const whatThisMeansField = await this.buildWhatThisMeans(signal);
+    if (whatThisMeansField) {
+      fields.push(whatThisMeansField);
+    }
+
+    // Add actionable "what to watch next" guidance
+    const whatToWatchField = this.buildWhatToWatch(signal);
+    if (whatToWatchField) {
+      fields.push(whatToWatchField);
     }
 
     // Add detailed reasoning section based on signal type
@@ -776,6 +801,373 @@ export class DiscordAlerter {
     return {
       name: '🔍 Why This Signal?',
       value: reasoning,
+      inline: false,
+    };
+  }
+
+  /**
+   * Build plain English interpretation of the signal
+   */
+  private buildPlainEnglishInterpretation(signal: EarlySignal): { name: string; value: string; inline: boolean } | null {
+    const metadata = signal.metadata;
+    if (!metadata) return null;
+
+    let interpretation = '';
+
+    switch (signal.signalType) {
+      case 'volume_spike':
+        if (metadata.volumeChangePercent !== undefined) {
+          const multiplier = metadata.spikeMultiplier || (metadata.volumeChangePercent / 100);
+          interpretation = `📊 **Volume is ${multiplier.toFixed(1)}x higher than normal** - ${metadata.volumeChangePercent.toFixed(0)}% increase suggests significant new interest in this market. This could indicate informed traders entering positions or news catalyzing activity.`;
+        }
+        break;
+
+      case 'price_movement':
+        if (metadata.maxChange !== undefined) {
+          const direction = metadata.maxChange > 0 ? 'upward' : 'downward';
+          interpretation = `📈 **Sharp ${direction} price movement** - ${Math.abs(metadata.maxChange).toFixed(1)}% change indicates market sentiment is shifting rapidly. This magnitude of movement typically signals new information or large order flow.`;
+        }
+        break;
+
+      case 'orderbook_imbalance':
+        if (metadata.microstructureData?.context) {
+          const bidVolume = metadata.microstructureData.context.bidVolume || 0;
+          const askVolume = metadata.microstructureData.context.askVolume || 0;
+          const ratio = askVolume > 0 ? bidVolume / askVolume : 0;
+
+          if (ratio > 1.5) {
+            interpretation = `🐂 **Aggressive buying pressure** - There's ${ratio.toFixed(1)}x more money waiting to buy than sell. This imbalance often precedes upward price movement as buyers overwhelm sellers.`;
+          } else if (ratio < 0.67) {
+            interpretation = `🐻 **Aggressive selling pressure** - There's ${(1/ratio).toFixed(1)}x more money waiting to sell than buy. This imbalance typically leads to downward price movement as sellers overwhelm buyers.`;
+          } else {
+            interpretation = `⚖️ **Orderbook becoming imbalanced** - Buy and sell pressure are starting to diverge. Watch for this imbalance to strengthen or reverse.`;
+          }
+        }
+        break;
+
+      case 'spread_anomaly':
+        if (metadata.microstructureData) {
+          const data = metadata.microstructureData;
+          const changePercent = data.baseline ? ((data.change || 0) / data.baseline) * 100 : 0;
+          if (changePercent > 50) {
+            interpretation = `📐 **Market makers pulling back** - Spread widened ${changePercent.toFixed(0)}%, indicating reduced liquidity. This often happens before significant price moves when informed traders are active.`;
+          } else {
+            interpretation = `📐 **Spread tightening** - Market makers are more confident and competing aggressively. This usually indicates a more stable market with good liquidity.`;
+          }
+        }
+        break;
+
+      case 'market_maker_withdrawal':
+        interpretation = `🚨 **Liquidity drying up** - Market makers are pulling their orders, leaving less depth in the orderbook. This often precedes volatility as fewer orders can absorb large trades.`;
+        break;
+
+      case 'liquidity_shift':
+        interpretation = `💧 **Significant liquidity movement** - The available depth in the orderbook is changing dramatically. This can signal informed trading or preparation for a large move.`;
+        break;
+
+      case 'front_running_detected':
+        interpretation = `🏃 **Potential front-running pattern** - Order flow suggests someone may be trading ahead of larger orders. This pattern typically appears when informed traders spot incoming volume.`;
+        break;
+
+      case 'information_leak':
+        interpretation = `🔓 **Unusual cross-market activity** - Multiple related markets are moving in coordinated ways, suggesting information may be leaking before official announcements.`;
+        break;
+
+      case 'new_market':
+        if (metadata.initialVolume) {
+          interpretation = `🆕 **New market with immediate activity** - $${metadata.initialVolume.toFixed(0)} volume within minutes of creation suggests strong initial interest or insider knowledge.`;
+        }
+        break;
+
+      default:
+        return null;
+    }
+
+    if (!interpretation) return null;
+
+    return {
+      name: '💡 What This Means',
+      value: interpretation,
+      inline: false,
+    };
+  }
+
+  /**
+   * Build "what this usually means" section with historical context
+   */
+  private async buildWhatThisMeans(signal: EarlySignal): Promise<{ name: string; value: string; inline: boolean } | null> {
+    if (!this.performanceTracker) return null;
+
+    try {
+      const stats = await this.performanceTracker.getSignalTypeStats(signal.signalType);
+      if (!stats || stats.totalSignals < 5) return null;
+
+      let meaning = '';
+
+      // Accuracy context
+      if (stats.accuracy > 0.7) {
+        meaning += `✅ **High reliability signal** - This type has been correct ${(stats.accuracy * 100).toFixed(0)}% of the time (${stats.totalSignals} historical cases).\n\n`;
+      } else if (stats.accuracy > 0.5) {
+        meaning += `⚠️ **Moderate reliability** - This signal type is correct ${(stats.accuracy * 100).toFixed(0)}% of the time. Use with caution.\n\n`;
+      } else {
+        meaning += `❌ **Lower reliability** - Historical accuracy is only ${(stats.accuracy * 100).toFixed(0)}%. Consider waiting for confirmation.\n\n`;
+      }
+
+      // Typical outcome
+      if (stats.avgPnL24hr !== 0) {
+        const direction = stats.avgPnL24hr > 0 ? 'gains' : 'losses';
+        const emoji = stats.avgPnL24hr > 0 ? '📈' : '📉';
+        meaning += `${emoji} **Typical 24hr outcome**: ${stats.avgPnL24hr > 0 ? '+' : ''}${stats.avgPnL24hr.toFixed(2)}% ${direction}\n`;
+      }
+
+      if (stats.avgPnL1hr !== 0) {
+        meaning += `⏱️ **Short-term (1hr)**: ${stats.avgPnL1hr > 0 ? '+' : ''}${stats.avgPnL1hr.toFixed(2)}%\n`;
+      }
+
+      // Win rate
+      if (stats.winRate > 0) {
+        meaning += `\n🎯 **Success rate**: ${(stats.winRate * 100).toFixed(0)}% of trades were profitable\n`;
+      }
+
+      // Risk/reward
+      if (stats.avgWin && stats.avgLoss) {
+        const ratio = Math.abs(stats.avgWin / stats.avgLoss);
+        meaning += `💰 **Risk/Reward**: Avg win ${stats.avgWin.toFixed(1)}% vs avg loss ${stats.avgLoss.toFixed(1)}% (${ratio.toFixed(1)}:1 ratio)`;
+      }
+
+      if (!meaning) return null;
+
+      return {
+        name: '📚 Historical Performance',
+        value: meaning,
+        inline: false,
+      };
+    } catch (error) {
+      logger.error('Error building what-this-means section:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Build actionable "what to watch next" guidance
+   */
+  private buildWhatToWatch(signal: EarlySignal): { name: string; value: string; inline: boolean } | null {
+    let guidance = '👀 **Watch for:**\n';
+    let added = false;
+
+    switch (signal.signalType) {
+      case 'volume_spike':
+        guidance += '• Price movement in next 5-15 minutes\n';
+        guidance += '• Volume sustaining above baseline (not just a spike)\n';
+        guidance += '• Orderbook imbalance developing\n';
+        guidance += '\n🚨 **Red flags:**\n';
+        guidance += '• Volume dropping back quickly (false alarm)\n';
+        guidance += '• No corresponding price movement (liquidity test)';
+        added = true;
+        break;
+
+      case 'price_movement':
+        guidance += '• Orderbook depth at new price levels\n';
+        guidance += '• Volume following the price move\n';
+        guidance += '• Spread stability (tight = confidence, wide = uncertainty)\n';
+        guidance += '\n🚨 **Red flags:**\n';
+        guidance += '• Immediate reversal (stop hunt or fat finger)\n';
+        guidance += '• Widening spread (liquidity concerns)';
+        added = true;
+        break;
+
+      case 'orderbook_imbalance':
+        guidance += '• Price moving in direction of imbalance\n';
+        guidance += '• Imbalance strengthening (ratio increasing)\n';
+        guidance += '• Large orders getting filled\n';
+        guidance += '\n🚨 **Red flags:**\n';
+        guidance += '• Imbalance flipping quickly (indecision)\n';
+        guidance += '• Price moving opposite to imbalance (trap)';
+        added = true;
+        break;
+
+      case 'spread_anomaly':
+        guidance += '• Whether spread normalizes or widens further\n';
+        guidance += '• New market makers entering\n';
+        guidance += '• Price volatility increasing\n';
+        guidance += '\n🚨 **Red flags:**\n';
+        guidance += '• Spread continuing to widen (major liquidity issue)\n';
+        guidance += '• Volume drying up completely';
+        added = true;
+        break;
+
+      case 'front_running_detected':
+        guidance += '• Large orders appearing in next few minutes\n';
+        guidance += '• Price moving sharply after accumulation\n';
+        guidance += '• Related markets showing similar patterns\n';
+        guidance += '\n🚨 **Red flags:**\n';
+        guidance += '• No follow-through (false positive)\n';
+        guidance += '• Pattern appearing in isolated market only';
+        added = true;
+        break;
+
+      case 'information_leak':
+        guidance += '• Official announcements or news within hours\n';
+        guidance += '• Additional correlated markets activating\n';
+        guidance += '• Volume acceleration across cluster\n';
+        guidance += '\n🚨 **Red flags:**\n';
+        guidance += '• Correlation breaking down\n';
+        guidance += '• No news materializing within 24 hours';
+        added = true;
+        break;
+
+      case 'market_maker_withdrawal':
+      case 'liquidity_shift':
+        guidance += '• Volatility increasing\n';
+        guidance += '• Larger bid-ask spreads\n';
+        guidance += '• New liquidity providers entering\n';
+        guidance += '\n🚨 **Red flags:**\n';
+        guidance += '• Total liquidity collapse\n';
+        guidance += '• Market becoming untradeable';
+        added = true;
+        break;
+
+      default:
+        return null;
+    }
+
+    if (!added) return null;
+
+    return {
+      name: '🎯 Action Plan',
+      value: guidance,
+      inline: false,
+    };
+  }
+
+  /**
+   * Build market health dashboard
+   */
+  private buildMarketHealthDashboard(signal: EarlySignal): { name: string; value: string; inline: boolean } | null {
+    const market = signal.market;
+    if (!market) return null;
+
+    let health = '```\n';
+
+    // Liquidity
+    const volumeK = market.volumeNum / 1000;
+    let liquidityEmoji = '🟢';
+    if (volumeK < 5) liquidityEmoji = '🔴';
+    else if (volumeK < 20) liquidityEmoji = '🟡';
+    health += `${liquidityEmoji} Liquidity: $${volumeK >= 1 ? volumeK.toFixed(1) + 'k' : market.volumeNum.toFixed(0)}\n`;
+
+    // Spread
+    if (market.spread !== undefined) {
+      const spreadBps = market.spread;
+      let spreadEmoji = '🟢';
+      if (spreadBps > 500) spreadEmoji = '🔴';
+      else if (spreadBps > 200) spreadEmoji = '🟡';
+      health += `${spreadEmoji} Spread: ${spreadBps.toFixed(0)} bps\n`;
+    }
+
+    // Market age
+    if (market.marketAge !== undefined) {
+      const ageHours = market.marketAge / (1000 * 60 * 60);
+      const ageDays = ageHours / 24;
+      let ageStr = '';
+      if (ageDays > 1) {
+        ageStr = `${ageDays.toFixed(1)} days`;
+      } else {
+        ageStr = `${ageHours.toFixed(1)} hours`;
+      }
+      const ageEmoji = ageHours < 1 ? '🆕' : ageDays > 7 ? '📅' : '⏰';
+      health += `${ageEmoji} Age: ${ageStr}\n`;
+    }
+
+    // Time to close
+    if (market.timeToClose !== undefined && market.timeToClose > 0) {
+      const hoursToClose = market.timeToClose / (1000 * 60 * 60);
+      const daysToClose = hoursToClose / 24;
+      let closeStr = '';
+      if (daysToClose > 1) {
+        closeStr = `${daysToClose.toFixed(1)} days`;
+      } else {
+        closeStr = `${hoursToClose.toFixed(1)} hours`;
+      }
+      const closeEmoji = hoursToClose < 24 ? '⏰' : '📅';
+      health += `${closeEmoji} Closes in: ${closeStr}\n`;
+    }
+
+    // Quality score
+    if (market.qualityScore !== undefined) {
+      const score = market.qualityScore;
+      let qualityEmoji = '🟢';
+      if (score < 40) qualityEmoji = '🔴';
+      else if (score < 70) qualityEmoji = '🟡';
+      health += `${qualityEmoji} Quality: ${score.toFixed(0)}/100\n`;
+    }
+
+    health += '```';
+
+    return {
+      name: '🏥 Market Health',
+      value: health,
+      inline: false,
+    };
+  }
+
+  /**
+   * Get visual severity indicator
+   */
+  private getSeverityEmoji(confidence: number, metadata?: any): string {
+    // Determine severity level
+    if (confidence >= 0.9 || metadata?.severity === 'critical') {
+      return '🔥🔥🔥'; // EXTREME
+    } else if (confidence >= 0.75 || metadata?.severity === 'high') {
+      return '🔥🔥'; // HIGH
+    } else if (confidence >= 0.6 || metadata?.severity === 'medium') {
+      return '🔥'; // ELEVATED
+    } else {
+      return '📊'; // NORMAL
+    }
+  }
+
+  /**
+   * Build severity explanation with context
+   */
+  private buildSeverityExplanation(signal: EarlySignal): { name: string; value: string; inline: boolean } | null {
+    const emoji = this.getSeverityEmoji(signal.confidence, signal.metadata);
+    const confidence = signal.confidence;
+
+    let severity = '';
+    let percentile = '';
+
+    if (confidence >= 0.9) {
+      severity = '**EXTREME**';
+      percentile = 'top 1%';
+    } else if (confidence >= 0.75) {
+      severity = '**HIGH**';
+      percentile = 'top 10%';
+    } else if (confidence >= 0.6) {
+      severity = '**ELEVATED**';
+      percentile = 'top 25%';
+    } else {
+      severity = '**MODERATE**';
+      percentile = 'top 50%';
+    }
+
+    // Add comparison to baseline if available
+    let comparison = '';
+    if (signal.metadata?.microstructureData?.baseline && signal.metadata?.microstructureData?.current) {
+      const baseline = signal.metadata.microstructureData.baseline;
+      const current = signal.metadata.microstructureData.current;
+      const multiplier = baseline !== 0 ? (current / baseline) : 0;
+
+      if (multiplier > 1) {
+        comparison = `\n📊 This is **${multiplier.toFixed(1)}x** the typical level for this market`;
+      }
+    }
+
+    const explanation = `${emoji} ${severity} (${percentile} of all signals)\nConfidence: ${(confidence * 100).toFixed(0)}%${comparison}`;
+
+    return {
+      name: '⚡ Signal Strength',
+      value: explanation,
       inline: false,
     };
   }
