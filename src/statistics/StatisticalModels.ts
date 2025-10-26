@@ -324,9 +324,12 @@ export class StatisticalModels {
     }
 
     // Calculate returns
+    // For prediction markets, use absolute probability changes instead of log returns
+    // to avoid bias. Log returns assume unbounded prices and make the same absolute
+    // move (e.g., 0.10 → 0.11) appear more volatile than 0.90 → 0.91
     const returns = [];
     for (let i = 1; i < prices.length; i++) {
-      returns.push(Math.log(prices[i] / prices[i - 1]));
+      returns.push(prices[i] - prices[i - 1]); // Absolute probability change
     }
 
     // Historical volatility (standard deviation of returns)

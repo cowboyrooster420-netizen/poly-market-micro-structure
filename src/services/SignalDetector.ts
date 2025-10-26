@@ -309,13 +309,14 @@ export class SignalDetector {
     const maxImmediateChange = immediatePriceChanges.length > 0 ? Math.max(...immediatePriceChanges.map(Math.abs)) : 0;
     
     // Calculate cumulative price change over 2-3 intervals for trend detection
+    // For prediction markets, use absolute probability changes (not percentage)
+    // to avoid bias toward low-probability markets
     let maxCumulativeChange = 0;
     if (twoIntervalsAgo && latest.prices && twoIntervalsAgo.prices) {
       for (let i = 0; i < latest.prices.length; i++) {
-        if (Math.abs(twoIntervalsAgo.prices[i]) > 1e-10) {
-          const cumulativeChange = Math.abs(((latest.prices[i] - twoIntervalsAgo.prices[i]) / twoIntervalsAgo.prices[i]) * 100);
-          maxCumulativeChange = Math.max(maxCumulativeChange, cumulativeChange);
-        }
+        // Absolute probability change in percentage points (e.g., 5 = 5pp move)
+        const cumulativeChange = Math.abs((latest.prices[i] - twoIntervalsAgo.prices[i]) * 100);
+        maxCumulativeChange = Math.max(maxCumulativeChange, cumulativeChange);
       }
     }
     
@@ -390,11 +391,14 @@ export class SignalDetector {
     if (!previousMetrics || !previousMetrics.prices) return {};
 
     const changes: Record<string, number> = {};
-    
+
+    // For prediction markets, use absolute probability changes (not percentage)
+    // to avoid bias toward low-probability markets
     currentPrices.forEach((currentPrice, index) => {
       const previousPrice = previousMetrics.prices[index];
-      if (previousPrice && Math.abs(previousPrice) > 1e-10) {
-        const change = ((currentPrice - previousPrice) / previousPrice) * 100;
+      if (previousPrice !== undefined && previousPrice !== null) {
+        // Absolute probability change in percentage points (e.g., 5 = 5pp move)
+        const change = (currentPrice - previousPrice) * 100;
         changes[`outcome_${index}`] = change;
       } else {
         changes[`outcome_${index}`] = 0;
@@ -413,12 +417,13 @@ export class SignalDetector {
     
     const prices = market.outcomePrices.map(p => parseFloat(p));
     let maxPriceChange = 0;
+    // For prediction markets, use absolute probability changes (not percentage)
+    // to avoid bias toward low-probability markets
     if (previousMetrics && previousMetrics.prices && previousMetrics.prices.length === prices.length) {
       for (let i = 0; i < prices.length; i++) {
-        if (Math.abs(previousMetrics.prices[i]) > 1e-10) {
-          const priceChange = Math.abs((prices[i] - previousMetrics.prices[i]) / previousMetrics.prices[i]) * 100;
-          maxPriceChange = Math.max(maxPriceChange, priceChange);
-        }
+        // Absolute probability change in percentage points (e.g., 5 = 5pp move)
+        const priceChange = Math.abs((prices[i] - previousMetrics.prices[i]) * 100);
+        maxPriceChange = Math.max(maxPriceChange, priceChange);
       }
     }
     
