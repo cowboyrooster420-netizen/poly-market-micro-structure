@@ -321,6 +321,14 @@ export class PolymarketService {
     }
   }
 
+  /**
+   * Get cached market with latest spread data
+   * Returns the cached market or null if not found
+   */
+  getCachedMarket(marketId: string): Market | null {
+    return this.marketCache.get(marketId) || null;
+  }
+
   private extractPrices(data: any): string[] {
     // Handle various price formats from Polymarket API
     if (data.tokens && data.tokens.length > 0) {
