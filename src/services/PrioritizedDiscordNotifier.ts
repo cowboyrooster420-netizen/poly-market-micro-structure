@@ -4,6 +4,7 @@ import { advancedLogger } from '../utils/AdvancedLogger';
 import { metricsCollector } from '../monitoring/MetricsCollector';
 import { alertManager, AlertDecision } from './AlertManager';
 import { configManager } from '../config/ConfigManager';
+import type { SignalPerformanceTracker } from './SignalPerformanceTracker';
 
 interface DiscordEmbed {
   title?: string;
@@ -46,6 +47,7 @@ export class PrioritizedDiscordNotifier {
   private webhookUrl: string | null = null;
   private readonly maxRetries = 3;
   private readonly retryDelayMs = 1000;
+  private performanceTracker?: SignalPerformanceTracker;
 
   // Priority-specific colors
   private readonly PRIORITY_COLORS = {
@@ -66,6 +68,13 @@ export class PrioritizedDiscordNotifier {
   constructor(config: BotConfig) {
     this.config = config;
     this.webhookUrl = config.discord.webhookUrl || null;
+  }
+
+  /**
+   * Set the performance tracker (can be set after construction)
+   */
+  setPerformanceTracker(tracker: SignalPerformanceTracker): void {
+    this.performanceTracker = tracker;
   }
 
   /**
@@ -181,7 +190,7 @@ export class PrioritizedDiscordNotifier {
     decision: AlertDecision,
     notificationConfig: any
   ): Promise<boolean> {
-    const embed = this.buildPrioritizedEmbed(signal, decision, notificationConfig);
+    const embed = await this.buildPrioritizedEmbed(signal, decision, notificationConfig);
     const content = notificationConfig.mentionEveryone ? '@everyone' : undefined;
 
     const payload: DiscordWebhookPayload = {
@@ -230,11 +239,11 @@ export class PrioritizedDiscordNotifier {
   /**
    * Build Discord embed with priority-specific formatting
    */
-  private buildPrioritizedEmbed(
+  private async buildPrioritizedEmbed(
     signal: EarlySignal,
     decision: AlertDecision,
     notificationConfig: any
-  ): DiscordEmbed {
+  ): Promise<DiscordEmbed> {
     const market = signal.market;
     const priority = decision.priority;
     const emoji = this.PRIORITY_EMOJIS[priority];
@@ -304,12 +313,57 @@ export class PrioritizedDiscordNotifier {
       });
     }
 
-    // Signal Reasoning (if HIGH or CRITICAL)
+    // Add rich explanation fields for all priorities
+
+    // Plain English interpretation - what this signal means
+    const interpretationField = this.buildPlainEnglishInterpretation(signal);
+    if (interpretationField) {
+      fields.push(interpretationField);
+    }
+
+    // Signal strength/severity explanation
+    const severityField = this.buildSeverityExplanation(signal);
+    if (severityField) {
+      fields.push(severityField);
+    }
+
+    // Market health dashboard
+    const healthField = this.buildMarketHealthDashboard(signal);
+    if (healthField) {
+      fields.push(healthField);
+    }
+
+    // Detailed reasoning section based on signal type
+    const reasoningField = this.buildReasoningSection(signal);
+    if (reasoningField) {
+      fields.push(reasoningField);
+    }
+
+    // Historical performance context (async)
+    if (priority === AlertPriority.CRITICAL || priority === AlertPriority.HIGH) {
+      const whatThisMeansField = await this.buildWhatThisMeans(signal);
+      if (whatThisMeansField) {
+        fields.push(whatThisMeansField);
+      }
+
+      const performanceField = await this.buildPerformanceStatsField(signal);
+      if (performanceField) {
+        fields.push(performanceField);
+      }
+    }
+
+    // Actionable "what to watch next" guidance
+    const whatToWatchField = this.buildWhatToWatch(signal);
+    if (whatToWatchField) {
+      fields.push(whatToWatchField);
+    }
+
+    // Old signal reasoning for context (kept for backwards compatibility)
     if (priority === AlertPriority.CRITICAL || priority === AlertPriority.HIGH) {
       const reasoning = this.buildSignalReasoning(signal, decision);
       if (reasoning) {
         fields.push({
-          name: '🔍 Why This Alert?',
+          name: '📋 Priority Context',
           value: reasoning,
           inline: false
         });
@@ -447,6 +501,569 @@ export class PrioritizedDiscordNotifier {
    */
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Build plain English interpretation of the signal
+   */
+  private buildPlainEnglishInterpretation(signal: EarlySignal): { name: string; value: string; inline: boolean } | null {
+    const metadata = signal.metadata;
+    if (!metadata) return null;
+
+    let interpretation = '';
+
+    switch (signal.signalType) {
+      case 'volume_spike':
+        if (metadata.volumeChangePercent !== undefined) {
+          const multiplier = metadata.spikeMultiplier || (metadata.volumeChangePercent / 100);
+          interpretation = `📊 **Volume is ${multiplier.toFixed(1)}x higher than normal** - ${metadata.volumeChangePercent.toFixed(0)}% increase suggests significant new interest in this market. This could indicate informed traders entering positions or news catalyzing activity.`;
+        }
+        break;
+
+      case 'price_movement':
+        if (metadata.maxChange !== undefined) {
+          const direction = metadata.maxChange > 0 ? 'upward' : 'downward';
+          interpretation = `📈 **Sharp ${direction} price movement** - ${Math.abs(metadata.maxChange).toFixed(1)}% change indicates market sentiment is shifting rapidly. This magnitude of movement typically signals new information or large order flow.`;
+        }
+        break;
+
+      case 'orderbook_imbalance':
+        if (metadata.microstructureData?.context) {
+          const bidVolume = metadata.microstructureData.context.bidVolume || 0;
+          const askVolume = metadata.microstructureData.context.askVolume || 0;
+          const ratio = askVolume > 0 ? bidVolume / askVolume : 0;
+
+          if (ratio > 1.5) {
+            interpretation = `🐂 **Aggressive buying pressure** - There's ${ratio.toFixed(1)}x more money waiting to buy than sell. This imbalance often precedes upward price movement as buyers overwhelm sellers.`;
+          } else if (ratio < 0.67) {
+            interpretation = `🐻 **Aggressive selling pressure** - There's ${(1/ratio).toFixed(1)}x more money waiting to sell than buy. This imbalance typically leads to downward price movement as sellers overwhelm buyers.`;
+          } else {
+            interpretation = `⚖️ **Orderbook becoming imbalanced** - Buy and sell pressure are starting to diverge. Watch for this imbalance to strengthen or reverse.`;
+          }
+        }
+        break;
+
+      case 'spread_anomaly':
+        if (metadata.microstructureData) {
+          const data = metadata.microstructureData;
+          const changePercent = data.baseline ? ((data.change || 0) / data.baseline) * 100 : 0;
+          if (changePercent > 50) {
+            interpretation = `📐 **Market makers pulling back** - Spread widened ${changePercent.toFixed(0)}%, indicating reduced liquidity. This often happens before significant price moves when informed traders are active.`;
+          } else {
+            interpretation = `📐 **Spread tightening** - Market makers are more confident and competing aggressively. This usually indicates a more stable market with good liquidity.`;
+          }
+        }
+        break;
+
+      case 'market_maker_withdrawal':
+        interpretation = `🚨 **Liquidity drying up** - Market makers are pulling their orders, leaving less depth in the orderbook. This often precedes volatility as fewer orders can absorb large trades.`;
+        break;
+
+      case 'liquidity_shift':
+        interpretation = `💧 **Significant liquidity movement** - The available depth in the orderbook is changing dramatically. This can signal informed trading or preparation for a large move.`;
+        break;
+
+      case 'front_running_detected':
+        interpretation = `🏃 **Potential front-running pattern** - Order flow suggests someone may be trading ahead of larger orders. This pattern typically appears when informed traders spot incoming volume.`;
+        break;
+
+      case 'information_leak':
+        interpretation = `🔓 **Unusual cross-market activity** - Multiple related markets are moving in coordinated ways, suggesting information may be leaking before official announcements.`;
+        break;
+
+      case 'new_market':
+        if (metadata.initialVolume) {
+          interpretation = `🆕 **New market with immediate activity** - $${metadata.initialVolume.toFixed(0)} volume within minutes of creation suggests strong initial interest or insider knowledge.`;
+        }
+        break;
+
+      default:
+        return null;
+    }
+
+    if (!interpretation) return null;
+
+    return {
+      name: '💡 What This Means',
+      value: interpretation,
+      inline: false,
+    };
+  }
+
+  /**
+   * Get visual severity indicator
+   */
+  private getSeverityEmoji(confidence: number, metadata?: any): string {
+    // Determine severity level
+    if (confidence >= 0.9 || metadata?.severity === 'critical') {
+      return '🔥🔥🔥'; // EXTREME
+    } else if (confidence >= 0.75 || metadata?.severity === 'high') {
+      return '🔥🔥'; // HIGH
+    } else if (confidence >= 0.6 || metadata?.severity === 'medium') {
+      return '🔥'; // ELEVATED
+    } else {
+      return '📊'; // NORMAL
+    }
+  }
+
+  /**
+   * Build severity explanation with context
+   */
+  private buildSeverityExplanation(signal: EarlySignal): { name: string; value: string; inline: boolean } | null {
+    const emoji = this.getSeverityEmoji(signal.confidence, signal.metadata);
+    const confidence = signal.confidence;
+
+    let severity = '';
+    let percentile = '';
+
+    if (confidence >= 0.9) {
+      severity = '**EXTREME**';
+      percentile = 'top 1%';
+    } else if (confidence >= 0.75) {
+      severity = '**HIGH**';
+      percentile = 'top 10%';
+    } else if (confidence >= 0.6) {
+      severity = '**ELEVATED**';
+      percentile = 'top 25%';
+    } else {
+      severity = '**MODERATE**';
+      percentile = 'top 50%';
+    }
+
+    // Add comparison to baseline if available
+    let comparison = '';
+    if (signal.metadata?.microstructureData?.baseline && signal.metadata?.microstructureData?.current) {
+      const baseline = signal.metadata.microstructureData.baseline;
+      const current = signal.metadata.microstructureData.current;
+      const multiplier = baseline !== 0 ? (current / baseline) : 0;
+
+      if (multiplier > 1) {
+        comparison = `\n📊 This is **${multiplier.toFixed(1)}x** the typical level for this market`;
+      }
+    }
+
+    const explanation = `${emoji} ${severity} (${percentile} of all signals)\nConfidence: ${(confidence * 100).toFixed(0)}%${comparison}`;
+
+    return {
+      name: '⚡ Signal Strength',
+      value: explanation,
+      inline: false,
+    };
+  }
+
+  /**
+   * Build detailed reasoning section based on signal type
+   */
+  private buildReasoningSection(signal: EarlySignal): { name: string; value: string; inline: boolean } | null {
+    const metadata = signal.metadata;
+    if (!metadata) return null;
+
+    let reasoning = '```\n━━━━━ DETECTION REASONING ━━━━━\n';
+
+    switch (signal.signalType) {
+      case 'volume_spike':
+        if (metadata.volumeChangePercent !== undefined && metadata.averageVolumeChange !== undefined) {
+          reasoning += `Current Volume Change: +${metadata.volumeChangePercent.toFixed(1)}%\n`;
+          reasoning += `Recent Average Change: +${metadata.averageVolumeChange.toFixed(1)}%\n`;
+          reasoning += `Spike Multiplier: ${metadata.spikeMultiplier?.toFixed(1)}x\n`;
+          reasoning += `Current Volume: $${metadata.currentVolume?.toFixed(0) || 'N/A'}\n`;
+          reasoning += `Threshold: Must exceed ${metadata.averageVolumeChange.toFixed(1)}% avg\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'price_movement':
+        if (metadata.maxChange !== undefined) {
+          // Show per-outcome changes
+          if (metadata.priceChanges) {
+            const outcomes = signal.market?.outcomes || ['YES', 'NO'];
+            reasoning += `Outcome Changes:\n`;
+            Object.entries(metadata.priceChanges).forEach(([key, value]) => {
+              const index = parseInt(key.replace('outcome_', ''));
+              const outcomeName = outcomes[index] || `Outcome ${index}`;
+              const change = value as number;
+              const sign = change > 0 ? '+' : '';
+              reasoning += `  ${outcomeName}: ${sign}${change.toFixed(2)}%\n`;
+            });
+          } else {
+            reasoning += `Max Price Change: ${metadata.maxChange.toFixed(2)}%\n`;
+          }
+          if (metadata.immediateChange !== undefined) {
+            reasoning += `Immediate Change: ${metadata.immediateChange.toFixed(2)}%\n`;
+          }
+          if (metadata.cumulativeChange !== undefined) {
+            reasoning += `Cumulative Change: ${metadata.cumulativeChange.toFixed(2)}%\n`;
+          }
+          if (metadata.movementType) {
+            reasoning += `Movement Type: ${metadata.movementType}\n`;
+          }
+          reasoning += `Threshold: 1.5% minimum change\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'orderbook_imbalance':
+        if (metadata.microstructureData) {
+          const data = metadata.microstructureData;
+          const bidVolume = data.context?.bidVolume || 0;
+          const askVolume = data.context?.askVolume || 0;
+          const ratio = askVolume > 0 ? bidVolume / askVolume : 0;
+
+          // Determine direction
+          let direction = 'NEUTRAL';
+          if (ratio > 1.5) {
+            direction = 'BULLISH (bid-heavy)';
+          } else if (ratio < 0.67) {
+            direction = 'BEARISH (ask-heavy)';
+          }
+
+          reasoning += `Direction: ${direction}\n`;
+          reasoning += `Bid Volume: $${bidVolume.toFixed(0)}\n`;
+          reasoning += `Ask Volume: $${askVolume.toFixed(0)}\n`;
+          reasoning += `Bid/Ask Ratio: ${ratio.toFixed(2)}:1\n`;
+          reasoning += `Current Imbalance: ${data.current?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Baseline: ${data.baseline?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Change: ${data.change > 0 ? '+' : ''}${data.change?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Threshold: 15% imbalance\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'spread_anomaly':
+        if (metadata.microstructureData) {
+          const data = metadata.microstructureData;
+          reasoning += `Current Spread: ${data.current?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Baseline Spread: ${data.baseline?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Change: ${data.change > 0 ? '+' : ''}${data.change?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Detection: Abnormal spread change\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'market_maker_withdrawal':
+        if (metadata.microstructureData) {
+          const data = metadata.microstructureData;
+          reasoning += `Current Depth: ${data.current?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Baseline Depth: ${data.baseline?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Depth Reduction: ${data.change?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Threshold: >15% depth reduction\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      case 'liquidity_shift':
+        if (metadata.microstructureData) {
+          const data = metadata.microstructureData;
+          reasoning += `Current Liquidity: ${data.current?.toFixed(2) || 'N/A'}\n`;
+          reasoning += `Baseline Liquidity: ${data.baseline?.toFixed(2) || 'N/A'}\n`;
+          reasoning += `Change: ${data.change > 0 ? '+' : ''}${data.change?.toFixed(2) || 'N/A'}\n`;
+          reasoning += `Threshold: 20+ point change\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        }
+        break;
+
+      default:
+        // Generic metadata display for other signal types
+        if (metadata.microstructureData) {
+          const data = metadata.microstructureData;
+          reasoning += `Current: ${data.current?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Baseline: ${data.baseline?.toFixed(4) || 'N/A'}\n`;
+          reasoning += `Change: ${data.change > 0 ? '+' : ''}${data.change?.toFixed(4) || 'N/A'}\n`;
+          if (signal.confidence) {
+            reasoning += `Confidence: ${(signal.confidence * 100).toFixed(0)}%\n`;
+          }
+        } else {
+          // No specific reasoning available
+          return null;
+        }
+        break;
+    }
+
+    reasoning += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n```';
+
+    return {
+      name: '🔍 Why This Signal?',
+      value: reasoning,
+      inline: false,
+    };
+  }
+
+  /**
+   * Build market health dashboard
+   */
+  private buildMarketHealthDashboard(signal: EarlySignal): { name: string; value: string; inline: boolean } | null {
+    const market = signal.market;
+    if (!market) return null;
+
+    let health = '```\n';
+
+    // Liquidity
+    const volumeK = market.volumeNum / 1000;
+    let liquidityEmoji = '🟢';
+    if (volumeK < 5) liquidityEmoji = '🔴';
+    else if (volumeK < 20) liquidityEmoji = '🟡';
+    health += `${liquidityEmoji} Liquidity: $${volumeK >= 1 ? volumeK.toFixed(1) + 'k' : market.volumeNum.toFixed(0)}\n`;
+
+    // Spread
+    if (market.spread !== undefined) {
+      const spreadBps = market.spread;
+      let spreadEmoji = '🟢';
+      if (spreadBps > 500) spreadEmoji = '🔴';
+      else if (spreadBps > 200) spreadEmoji = '🟡';
+      health += `${spreadEmoji} Spread: ${spreadBps.toFixed(0)} bps\n`;
+    }
+
+    // Market age
+    if (market.marketAge !== undefined) {
+      const ageHours = market.marketAge / (1000 * 60 * 60);
+      const ageDays = ageHours / 24;
+      let ageStr = '';
+      if (ageDays > 1) {
+        ageStr = `${ageDays.toFixed(1)} days`;
+      } else {
+        ageStr = `${ageHours.toFixed(1)} hours`;
+      }
+      const ageEmoji = ageHours < 1 ? '🆕' : ageDays > 7 ? '📅' : '⏰';
+      health += `${ageEmoji} Age: ${ageStr}\n`;
+    }
+
+    // Time to close
+    if (market.timeToClose !== undefined && market.timeToClose > 0) {
+      const hoursToClose = market.timeToClose / (1000 * 60 * 60);
+      const daysToClose = hoursToClose / 24;
+      let closeStr = '';
+      if (daysToClose > 1) {
+        closeStr = `${daysToClose.toFixed(1)} days`;
+      } else {
+        closeStr = `${hoursToClose.toFixed(1)} hours`;
+      }
+      const closeEmoji = hoursToClose < 24 ? '⏰' : '📅';
+      health += `${closeEmoji} Closes in: ${closeStr}\n`;
+    }
+
+    // Quality score
+    if (market.qualityScore !== undefined) {
+      const score = market.qualityScore;
+      let qualityEmoji = '🟢';
+      if (score < 40) qualityEmoji = '🔴';
+      else if (score < 70) qualityEmoji = '🟡';
+      health += `${qualityEmoji} Quality: ${score.toFixed(0)}/100\n`;
+    }
+
+    health += '```';
+
+    return {
+      name: '🏥 Market Health',
+      value: health,
+      inline: false,
+    };
+  }
+
+  /**
+   * Build actionable "what to watch next" guidance
+   */
+  private buildWhatToWatch(signal: EarlySignal): { name: string; value: string; inline: boolean } | null {
+    let guidance = '👀 **Watch for:**\n';
+    let added = false;
+
+    switch (signal.signalType) {
+      case 'volume_spike':
+        guidance += '• Price movement in next 5-15 minutes\n';
+        guidance += '• Volume sustaining above baseline (not just a spike)\n';
+        guidance += '• Orderbook imbalance developing\n';
+        guidance += '\n🚨 **Red flags:**\n';
+        guidance += '• Volume dropping back quickly (false alarm)\n';
+        guidance += '• No corresponding price movement (liquidity test)';
+        added = true;
+        break;
+
+      case 'price_movement':
+        guidance += '• Orderbook depth at new price levels\n';
+        guidance += '• Volume following the price move\n';
+        guidance += '• Spread stability (tight = confidence, wide = uncertainty)\n';
+        guidance += '\n🚨 **Red flags:**\n';
+        guidance += '• Immediate reversal (stop hunt or fat finger)\n';
+        guidance += '• Widening spread (liquidity concerns)';
+        added = true;
+        break;
+
+      case 'orderbook_imbalance':
+        guidance += '• Price moving in direction of imbalance\n';
+        guidance += '• Imbalance strengthening (ratio increasing)\n';
+        guidance += '• Large orders getting filled\n';
+        guidance += '\n🚨 **Red flags:**\n';
+        guidance += '• Imbalance flipping quickly (indecision)\n';
+        guidance += '• Price moving opposite to imbalance (trap)';
+        added = true;
+        break;
+
+      case 'spread_anomaly':
+        guidance += '• Whether spread normalizes or widens further\n';
+        guidance += '• New market makers entering\n';
+        guidance += '• Price volatility increasing\n';
+        guidance += '\n🚨 **Red flags:**\n';
+        guidance += '• Spread continuing to widen (major liquidity issue)\n';
+        guidance += '• Volume drying up completely';
+        added = true;
+        break;
+
+      case 'market_maker_withdrawal':
+      case 'liquidity_shift':
+        guidance += '• Volatility increasing\n';
+        guidance += '• Larger bid-ask spreads\n';
+        guidance += '• New liquidity providers entering\n';
+        guidance += '\n🚨 **Red flags:**\n';
+        guidance += '• Total liquidity collapse\n';
+        guidance += '• Market becoming untradeable';
+        added = true;
+        break;
+
+      default:
+        return null;
+    }
+
+    if (!added) return null;
+
+    return {
+      name: '🎯 Action Plan',
+      value: guidance,
+      inline: false,
+    };
+  }
+
+  /**
+   * Build "what this usually means" section with historical context
+   */
+  private async buildWhatThisMeans(signal: EarlySignal): Promise<{ name: string; value: string; inline: boolean } | null> {
+    if (!this.performanceTracker) return null;
+
+    try {
+      const stats = await this.performanceTracker.getSignalTypeStats(signal.signalType);
+      if (!stats || stats.totalSignals < 5) return null;
+
+      let meaning = '';
+
+      // Accuracy context
+      if (stats.accuracy > 0.7) {
+        meaning += `✅ **High reliability signal** - This type has been correct ${(stats.accuracy * 100).toFixed(0)}% of the time (${stats.totalSignals} historical cases).\n\n`;
+      } else if (stats.accuracy > 0.5) {
+        meaning += `⚠️ **Moderate reliability** - This signal type is correct ${(stats.accuracy * 100).toFixed(0)}% of the time. Use with caution.\n\n`;
+      } else {
+        meaning += `❌ **Lower reliability** - Historical accuracy is only ${(stats.accuracy * 100).toFixed(0)}%. Consider waiting for confirmation.\n\n`;
+      }
+
+      // Typical outcome
+      if (stats.avgPnL24hr !== 0) {
+        const direction = stats.avgPnL24hr > 0 ? 'gains' : 'losses';
+        const emoji = stats.avgPnL24hr > 0 ? '📈' : '📉';
+        meaning += `${emoji} **Typical 24hr outcome**: ${stats.avgPnL24hr > 0 ? '+' : ''}${stats.avgPnL24hr.toFixed(2)}% ${direction}\n`;
+      }
+
+      if (stats.avgPnL1hr !== 0) {
+        meaning += `⏱️ **Short-term (1hr)**: ${stats.avgPnL1hr > 0 ? '+' : ''}${stats.avgPnL1hr.toFixed(2)}%\n`;
+      }
+
+      // Win rate
+      if (stats.winRate > 0) {
+        meaning += `\n🎯 **Success rate**: ${(stats.winRate * 100).toFixed(0)}% of trades were profitable\n`;
+      }
+
+      // Risk/reward
+      if (stats.avgWin && stats.avgLoss) {
+        const ratio = Math.abs(stats.avgWin / stats.avgLoss);
+        meaning += `💰 **Risk/Reward**: Avg win ${stats.avgWin.toFixed(1)}% vs avg loss ${stats.avgLoss.toFixed(1)}% (${ratio.toFixed(1)}:1 ratio)`;
+      }
+
+      if (!meaning) return null;
+
+      return {
+        name: '📚 Historical Performance',
+        value: meaning,
+        inline: false,
+      };
+    } catch (error) {
+      logger.error('Error building what-this-means section:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Build performance stats field showing historical accuracy and P&L for this signal type
+   */
+  private async buildPerformanceStatsField(signal: EarlySignal): Promise<{ name: string; value: string; inline: boolean } | null> {
+    if (!this.performanceTracker) {
+      return null;
+    }
+
+    try {
+      const stats = await this.performanceTracker.getSignalTypeStats(signal.signalType);
+      if (!stats || stats.totalSignals < 5) {
+        // Don't show stats until we have at least 5 signals for meaningful data
+        return null;
+      }
+
+      let statsText = '```\n━━━━━ HISTORICAL PERFORMANCE ━━━━━\n';
+
+      // Accuracy metrics
+      statsText += `Sample Size: ${stats.totalSignals} signals\n`;
+      if (stats.accuracy > 0) {
+        statsText += `Accuracy: ${(stats.accuracy * 100).toFixed(1)}%\n`;
+      }
+      if (stats.winRate > 0) {
+        statsText += `Win Rate: ${(stats.winRate * 100).toFixed(1)}%\n`;
+      }
+
+      // P&L metrics
+      if (stats.avgPnL1hr !== 0) {
+        statsText += `Avg P&L (1hr): ${stats.avgPnL1hr > 0 ? '+' : ''}${stats.avgPnL1hr.toFixed(2)}%\n`;
+      }
+      if (stats.avgPnL24hr !== 0) {
+        statsText += `Avg P&L (24hr): ${stats.avgPnL24hr > 0 ? '+' : ''}${stats.avgPnL24hr.toFixed(2)}%\n`;
+      }
+
+      // Risk metrics
+      if (stats.sharpeRatio !== 0) {
+        const sharpeEmoji = stats.sharpeRatio > 1 ? '✅' : stats.sharpeRatio > 0 ? '⚠️' : '❌';
+        statsText += `Sharpe Ratio: ${stats.sharpeRatio.toFixed(2)} ${sharpeEmoji}\n`;
+      }
+
+      // Expected value and position sizing
+      if (stats.expectedValue !== 0) {
+        const evEmoji = stats.expectedValue > 0 ? '📈' : '📉';
+        statsText += `Expected Value: ${stats.expectedValue > 0 ? '+' : ''}${stats.expectedValue.toFixed(2)}% ${evEmoji}\n`;
+      }
+      if (stats.kellyFraction > 0) {
+        statsText += `Kelly Position Size: ${(stats.kellyFraction * 100).toFixed(1)}% of capital\n`;
+      }
+
+      // Bayesian confidence
+      if (stats.posteriorConfidence !== 0.5) {
+        statsText += `Bayesian Confidence: ${(stats.posteriorConfidence * 100).toFixed(1)}%\n`;
+      }
+
+      statsText += '```';
+
+      return {
+        name: '📊 Track Record',
+        value: statsText,
+        inline: false
+      };
+    } catch (error) {
+      logger.error('Error fetching performance stats:', error);
+      return null;
+    }
   }
 
   /**
