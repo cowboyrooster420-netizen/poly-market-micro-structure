@@ -1,6 +1,7 @@
 import { OrderbookData, OrderbookLevel, OrderbookMetrics, MicrostructureSignal, BotConfig } from '../types';
 import { OrderbookBuffer } from '../utils/RingBuffer';
 import { logger } from '../utils/logger';
+import { toPercentage, toBasisPoints } from '../utils/spreadHelpers';
 
 export class OrderbookAnalyzer {
   private config: BotConfig;
@@ -18,8 +19,8 @@ export class OrderbookAnalyzer {
     const totalBidVolume = this.calculateTotalVolume(orderbook.bids);
     const totalAskVolume = this.calculateTotalVolume(orderbook.asks);
     const bidAskRatio = totalAskVolume > 0 ? totalBidVolume / totalAskVolume : 0;
-    // For prediction markets, spread is already in decimal form (0-1), just convert to percentage
-    const spreadPercent = orderbook.spread * 100;
+    // Use helper to convert spread to percentage
+    const spreadPercent = toPercentage(orderbook.spread);
     
     // Calculate depth imbalance (weighted by price levels)
     const depthImbalance = this.calculateDepthImbalance(orderbook.bids, orderbook.asks);
@@ -112,8 +113,8 @@ export class OrderbookAnalyzer {
   private calculateLiquidityScore(orderbook: OrderbookData): number {
     const totalVolume = this.calculateTotalVolume(orderbook.bids) + this.calculateTotalVolume(orderbook.asks);
     const depth = Math.min(orderbook.bids.length, orderbook.asks.length);
-    // For prediction markets, spread is already in decimal form (0-1), just convert to percentage
-    const spreadPenalty = orderbook.spread * 100;
+    // Use helper to convert spread to percentage
+    const spreadPenalty = toPercentage(orderbook.spread);
 
     // Score based on volume, depth, and tight spread
     let score = Math.min(100, (totalVolume / 1000) + (depth * 2));
@@ -190,8 +191,8 @@ export class OrderbookAnalyzer {
           baseline: avgSpread,
           change: spreadChange,
           context: {
-            spreadPercent: orderbook.spread * 100,
-            spreadBps: orderbook.spread * 10000,
+            spreadPercent: toPercentage(orderbook.spread),
+            spreadBps: toBasisPoints(orderbook.spread),
             volatility: spreadVolatility,
           },
         },
