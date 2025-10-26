@@ -128,6 +128,7 @@ export class EarlyBot {
 
       // Connect performance tracker to Discord alerter for historical stats
       this.discordAlerter.setPerformanceTracker(this.signalPerformanceTracker);
+      this.prioritizedNotifier.setPerformanceTracker(this.signalPerformanceTracker);
       logger.info('Discord alerts will now include historical performance stats');
 
       // Set up event handlers
@@ -549,7 +550,37 @@ export class EarlyBot {
         // Refresh market data from cache to get latest spread from orderbook updates
         const cachedMarket = this.polymarketService.getCachedMarket(signal.marketId);
         if (cachedMarket) {
-          signal.market = cachedMarket;
+          if (cachedMarket.spread !== undefined) {
+            signal.market = cachedMarket;
+            advancedLogger.info(`Updated signal with cached market data - spread: ${cachedMarket.spread} bps`, {
+              component: 'bot',
+              operation: 'refresh_market_data',
+              metadata: {
+                marketId: signal.marketId,
+                spread: cachedMarket.spread,
+                volume: cachedMarket.volumeNum
+              }
+            });
+          } else {
+            signal.market = cachedMarket;
+            advancedLogger.warn(`Market in cache but spread not yet populated - may show N/A`, {
+              component: 'bot',
+              operation: 'refresh_market_data',
+              metadata: {
+                marketId: signal.marketId,
+                question: cachedMarket.question?.substring(0, 50)
+              }
+            });
+          }
+        } else {
+          advancedLogger.warn(`Market not in cache - spread will show N/A`, {
+            component: 'bot',
+            operation: 'refresh_market_data',
+            metadata: {
+              marketId: signal.marketId,
+              question: signal.market?.question?.substring(0, 50)
+            }
+          });
         }
 
         const { sent, decision } = await advancedLogger.timeOperation(
