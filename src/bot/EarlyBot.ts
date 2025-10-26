@@ -132,7 +132,10 @@ export class EarlyBot {
       // Set up event handlers
       this.microstructureDetector.onSignal(this.createSafeSignalHandler());
       this.microstructureDetector.onMicrostructureSignal(this.createSafeMicrostructureHandler());
-      
+      this.microstructureDetector.onOrderbookUpdate((orderbook) => {
+        this.polymarketService.updateMarketSpread(orderbook);
+      });
+
       // Test Discord connection if configured
       if (this.config.discord.webhookUrl) {
         try {
@@ -249,14 +252,14 @@ export class EarlyBot {
       }
     }, this.config.checkIntervalMs);
 
-    // Set up performance reporting
-    this.performanceReportInterval = setInterval(async () => {
-      try {
-        await this.sendPerformanceReport();
-      } catch (error) {
-        logger.error('Error during performance report:', error);
-      }
-    }, 30 * 60 * 1000); // Every 30 minutes
+    // Performance reporting disabled - reports had no useful information
+    // this.performanceReportInterval = setInterval(async () => {
+    //   try {
+    //     await this.sendPerformanceReport();
+    //   } catch (error) {
+    //     logger.error('Error during performance report:', error);
+    //   }
+    // }, 30 * 60 * 1000); // Every 30 minutes
 
     metricsCollector.incrementCounter('bot.start_success', 1);
     

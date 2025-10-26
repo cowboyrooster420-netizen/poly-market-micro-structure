@@ -164,20 +164,23 @@ export class OrderFlowAnalyzer {
   // Flow pressure analysis
   private calculateFlowPressure(bids: OrderbookLevel[], asks: OrderbookLevel[]): { bidPressure: number; askPressure: number } {
     // Calculate cumulative pressure at each level
+    // For prediction markets, use SIZE only (not size × price) to avoid bias
+    // toward high-probability markets. Price scaling would make the same order
+    // size appear 9x stronger at 90% vs 10% probability.
     let bidPressure = 0;
     let askPressure = 0;
-    
+
     // Bid pressure: larger orders deeper in book indicate strong support
     for (let i = 0; i < Math.min(bids.length, this.ORDERBOOK_DEPTH); i++) {
       const levelWeight = 1 / (i + 1); // Deeper levels have less weight
-      bidPressure += bids[i].size * bids[i].price * levelWeight;
+      bidPressure += bids[i].size * levelWeight;
     }
-    
+
     for (let i = 0; i < Math.min(asks.length, this.ORDERBOOK_DEPTH); i++) {
       const levelWeight = 1 / (i + 1);
-      askPressure += asks[i].size * asks[i].price * levelWeight;
+      askPressure += asks[i].size * levelWeight;
     }
-    
+
     return { bidPressure, askPressure };
   }
 
@@ -458,12 +461,15 @@ export class OrderFlowAnalyzer {
 
   private calculatePriceImpact(largeTrades: TickData[], bids: OrderbookLevel[], asks: OrderbookLevel[]): number {
     // Calculate actual price movement from large trades
+    // For prediction markets, use absolute probability change (not percentage)
+    // since prices are probabilities (0-1), not unbounded prices
     if (largeTrades.length === 0) return 0;
-    
+
     const firstTrade = largeTrades[0];
     const lastTrade = largeTrades[largeTrades.length - 1];
-    
-    return Math.abs(lastTrade.price - firstTrade.price) / firstTrade.price;
+
+    // Return absolute probability change (e.g., 0.05 = 5 percentage points)
+    return Math.abs(lastTrade.price - firstTrade.price);
   }
 
   private getExpectedPriceImpact(largeTrades: TickData[], bids: OrderbookLevel[], asks: OrderbookLevel[]): number {
