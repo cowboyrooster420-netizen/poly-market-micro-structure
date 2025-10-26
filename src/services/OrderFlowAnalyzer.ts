@@ -1,5 +1,6 @@
 import { OrderbookData, OrderbookLevel, TickData, MicrostructureSignal, BotConfig } from '../types';
 import { logger } from '../utils/logger';
+import { calculateTightness } from '../utils/spreadHelpers';
 
 interface OrderFlowMetrics {
   marketId: string;
@@ -195,9 +196,9 @@ export class OrderFlowAnalyzer {
 
   // Market maker behavior detection
   private calculateSpreadTightness(orderbook: OrderbookData): number {
-    // Normalize spread by mid price
-    if (orderbook.midPrice === 0) return 0;
-    return 1 - (orderbook.spread / orderbook.midPrice); // Higher = tighter spread
+    // Use helper function to calculate tightness (0-1 scale)
+    // Default max of 1000 bps (10%) for prediction markets
+    return calculateTightness(orderbook.spread, 1000);
   }
 
   private calculateMarketMakerPresence(bids: OrderbookLevel[], asks: OrderbookLevel[]): number {
@@ -527,7 +528,9 @@ export class OrderFlowAnalyzer {
   }
 
   private getRelativeSpread(orderbook: OrderbookData): number {
-    return orderbook.midPrice > 0 ? orderbook.spread / orderbook.midPrice : 0;
+    // For prediction markets, spread is already absolute (not relative to price)
+    // Return spread directly - helper functions available if conversion needed
+    return orderbook.spread;
   }
 
   // Cleanup methods

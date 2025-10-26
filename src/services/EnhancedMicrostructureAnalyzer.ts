@@ -2,6 +2,7 @@ import { OrderbookData, EnhancedMicrostructureMetrics, BotConfig } from '../type
 import { RingBuffer, StatisticalModels, StatisticalConfig } from '../statistics/StatisticalModels';
 import { AnomalyDetector, AnomalyDetectionConfig } from '../statistics/AnomalyDetector';
 import { logger } from '../utils/logger';
+import { toBasisPoints } from '../utils/spreadHelpers';
 
 interface TimeBasedBaseline {
   hourOfDay: number;
@@ -245,8 +246,10 @@ export class EnhancedMicrostructureAnalyzer {
     const imbalance = totalBidVolume + totalAskVolume > 0 ? 
       (totalBidVolume - totalAskVolume) / (totalBidVolume + totalAskVolume) : 0;
     
-    // Spread in basis points
-    const spreadBps = orderbook.midPrice > 0 ? (orderbook.spread / orderbook.midPrice) * 10000 : 0;
+    // Spread in basis points using helper function
+    // For prediction markets, prices are probabilities (0-1), so spread is absolute
+    // Example: spread of 0.027 (2.7 cents) = 2.7% = 270 bps
+    const spreadBps = toBasisPoints(orderbook.spread);
     
     // Spread change calculation
     const spreadBuffer = this.spreadBuffers.get(orderbook.marketId)!;
