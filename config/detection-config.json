@@ -169,6 +169,11 @@
           "statistical_anomaly"
         ]
       }
+    },
+    "alertPrioritization": {
+      "qualityFilters": {
+        "minCategoryScore": 1
+      }
     }
   },
   "performance": {
