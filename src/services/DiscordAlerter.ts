@@ -881,4 +881,98 @@ export class DiscordAlerter {
 
     return await this.sendWebhookMessage(payload);
   }
+
+  /**
+   * Send a comprehensive P&L report for all signal types
+   */
+  async sendPnLReport(allStats: import('../services/SignalPerformanceTracker').SignalTypeStats[]): Promise<boolean> {
+    if (!this.config.discord.webhookUrl) return false;
+    if (!allStats || allStats.length === 0) {
+      logger.info('No signal performance data available yet for P&L report');
+      return false;
+    }
+
+    try {
+      const fields: { name: string; value: string; inline: boolean }[] = [];
+
+      // Overall summary
+      const totalSignals = allStats.reduce((sum, s) => sum + s.totalSignals, 0);
+      const weightedAccuracy = allStats.reduce((sum, s) => sum + (s.accuracy * s.totalSignals), 0) / totalSignals;
+      const avgPnL24hr = allStats.reduce((sum, s) => sum + (s.avgPnL24hr * s.totalSignals), 0) / totalSignals;
+
+      fields.push({
+        name: '📊 Overall Summary',
+        value: `\`\`\`
+Total Signals: ${totalSignals}
+Avg Accuracy:  ${(weightedAccuracy * 100).toFixed(1)}%
+Avg 24hr P&L:  ${(avgPnL24hr * 100).toFixed(2)}%
+\`\`\``,
+        inline: false
+      });
+
+      // Per signal type stats
+      allStats.forEach(stat => {
+        if (stat.totalSignals < 3) return; // Skip signal types with too few samples
+
+        const signalName = stat.signalType.replace(/_/g, ' ').toUpperCase();
+        let statsText = '```\n';
+        statsText += `Signals:    ${stat.totalSignals}\n`;
+        statsText += `Accuracy:   ${(stat.accuracy * 100).toFixed(1)}%\n`;
+        statsText += `Win Rate:   ${(stat.winRate * 100).toFixed(1)}%\n`;
+        statsText += `\n`;
+        statsText += `30min P&L:  ${(stat.avgPnL30min * 100).toFixed(2)}%\n`;
+        statsText += `1hr P&L:    ${(stat.avgPnL1hr * 100).toFixed(2)}%\n`;
+        statsText += `24hr P&L:   ${(stat.avgPnL24hr * 100).toFixed(2)}%\n`;
+        if (stat.avgPnLFinal !== 0) {
+          statsText += `Final P&L:  ${(stat.avgPnLFinal * 100).toFixed(2)}%\n`;
+        }
+        statsText += `\n`;
+        statsText += `Avg Win:    +${(stat.avgWin * 100).toFixed(2)}%\n`;
+        statsText += `Avg Loss:   ${(stat.avgLoss * 100).toFixed(2)}%\n`;
+        statsText += `Sharpe:     ${stat.sharpeRatio.toFixed(2)}\n`;
+        statsText += `EV:         ${(stat.expectedValue * 100).toFixed(2)}%\n`;
+        if (stat.kellyFraction > 0) {
+          statsText += `Kelly:      ${(stat.kellyFraction * 100).toFixed(1)}%\n`;
+        }
+        statsText += '```';
+
+        fields.push({
+          name: `📌 ${signalName}`,
+          value: statsText,
+          inline: false
+        });
+      });
+
+      if (fields.length === 1) {
+        // Only overall summary, no individual signal types with enough data
+        fields.push({
+          name: '⏳ Insufficient Data',
+          value: 'Need at least 3 signals per type for detailed stats.\nKeep the bot running to collect more data!',
+          inline: false
+        });
+      }
+
+      const embed: DiscordEmbed = {
+        title: '💰 Signal P&L Performance Report',
+        description: 'Historical performance metrics for all signal types',
+        color: 0x00d1cd, // Teal color
+        fields,
+        footer: {
+          text: 'Poly Early Bot • P&L Report',
+        },
+        timestamp: new Date().toISOString(),
+      };
+
+      const payload: DiscordWebhookPayload = {
+        embeds: [embed],
+        username: 'Poly Early Bot',
+      };
+
+      logger.info('Sending P&L report to Discord');
+      return await this.sendWebhookMessage(payload);
+    } catch (error) {
+      logger.error('Error sending P&L report:', error);
+      return false;
+    }
+  }
 }

@@ -445,6 +445,38 @@ export class SignalPerformanceTracker {
   }
 
   /**
+   * Get performance stats for all signal types
+   */
+  async getAllSignalTypeStats(): Promise<SignalTypeStats[]> {
+    const rows = await this.database.query(
+      'SELECT * FROM signal_type_performance ORDER BY total_signals DESC'
+    );
+
+    return rows.map((row: any) => ({
+      signalType: row.signal_type,
+      totalSignals: row.total_signals,
+      correctPredictions: row.correct_predictions,
+      accuracy: parseFloat(row.accuracy || 0),
+
+      avgPnL30min: parseFloat(row.avg_pnl_30min || 0),
+      avgPnL1hr: parseFloat(row.avg_pnl_1hr || 0),
+      avgPnL24hr: parseFloat(row.avg_pnl_24hr || 0),
+      avgPnLFinal: parseFloat(row.avg_pnl_final || 0),
+
+      sharpeRatio: parseFloat(row.sharpe_ratio || 0),
+      winRate: parseFloat(row.win_rate || 0),
+      avgWin: parseFloat(row.avg_win || 0),
+      avgLoss: parseFloat(row.avg_loss || 0),
+
+      expectedValue: parseFloat(row.expected_value || 0),
+      kellyFraction: parseFloat(row.kelly_fraction || 0),
+
+      posteriorConfidence: parseFloat(row.posterior_confidence || 0.5),
+      sampleSize: row.sample_size || 0
+    }));
+  }
+
+  /**
    * Recalculate stats for all signal types
    */
   private async recalculateAllSignalTypeStats(): Promise<void> {
