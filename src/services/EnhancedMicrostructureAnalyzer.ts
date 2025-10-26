@@ -246,7 +246,10 @@ export class EnhancedMicrostructureAnalyzer {
       (totalBidVolume - totalAskVolume) / (totalBidVolume + totalAskVolume) : 0;
     
     // Spread in basis points
-    const spreadBps = orderbook.midPrice > 0 ? (orderbook.spread / orderbook.midPrice) * 10000 : 0;
+    // For prediction markets, prices are already in probability form (0-1)
+    // So spread is in absolute percentage terms - just convert to bps
+    // Example: spread of 0.027 (2.7 cents) = 2.7% = 270 bps
+    const spreadBps = orderbook.spread * 10000;
     
     // Spread change calculation
     const spreadBuffer = this.spreadBuffers.get(orderbook.marketId)!;

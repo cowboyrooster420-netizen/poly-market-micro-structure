@@ -239,16 +239,10 @@ export class PolymarketService {
       const outcomes = data.outcomes || (data.tokens ? data.tokens.map((t: any) => t.outcome) : ['Yes', 'No']);
       const outcomePrices = this.extractPrices(data);
 
-      // Calculate spread (difference between highest and lowest price)
+      // Spread will be calculated from real-time orderbook data
+      // The initial spread from outcome prices is misleading - it shows the outcome range, not bid-ask spread
+      // Real bid-ask spread comes from WebSocket orderbook updates
       let spread: number | undefined;
-      if (outcomePrices && outcomePrices.length >= 2) {
-        const prices = outcomePrices.map(p => parseFloat(p)).filter(p => !isNaN(p));
-        if (prices.length >= 2) {
-          const maxPrice = Math.max(...prices);
-          const minPrice = Math.min(...prices);
-          spread = (maxPrice - minPrice) * 10000; // Convert to basis points
-        }
-      }
 
       // Calculate market age
       let marketAge: number | undefined;
