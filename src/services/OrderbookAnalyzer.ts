@@ -18,7 +18,8 @@ export class OrderbookAnalyzer {
     const totalBidVolume = this.calculateTotalVolume(orderbook.bids);
     const totalAskVolume = this.calculateTotalVolume(orderbook.asks);
     const bidAskRatio = totalAskVolume > 0 ? totalBidVolume / totalAskVolume : 0;
-    const spreadPercent = orderbook.bestAsk > 0 ? (orderbook.spread / orderbook.bestAsk) * 100 : 0;
+    // For prediction markets, spread is already in decimal form (0-1), just convert to percentage
+    const spreadPercent = orderbook.spread * 100;
     
     // Calculate depth imbalance (weighted by price levels)
     const depthImbalance = this.calculateDepthImbalance(orderbook.bids, orderbook.asks);
@@ -111,7 +112,8 @@ export class OrderbookAnalyzer {
   private calculateLiquidityScore(orderbook: OrderbookData): number {
     const totalVolume = this.calculateTotalVolume(orderbook.bids) + this.calculateTotalVolume(orderbook.asks);
     const depth = Math.min(orderbook.bids.length, orderbook.asks.length);
-    const spreadPenalty = orderbook.bestAsk > 0 ? (orderbook.spread / orderbook.bestAsk) * 100 : 0;
+    // For prediction markets, spread is already in decimal form (0-1), just convert to percentage
+    const spreadPenalty = orderbook.spread * 100;
 
     // Score based on volume, depth, and tight spread
     let score = Math.min(100, (totalVolume / 1000) + (depth * 2));
@@ -188,7 +190,8 @@ export class OrderbookAnalyzer {
           baseline: avgSpread,
           change: spreadChange,
           context: {
-            spreadPercent: (orderbook.spread / orderbook.bestAsk) * 100,
+            spreadPercent: orderbook.spread * 100,
+            spreadBps: orderbook.spread * 10000,
             volatility: spreadVolatility,
           },
         },

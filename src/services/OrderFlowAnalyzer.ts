@@ -195,9 +195,12 @@ export class OrderFlowAnalyzer {
 
   // Market maker behavior detection
   private calculateSpreadTightness(orderbook: OrderbookData): number {
-    // Normalize spread by mid price
-    if (orderbook.midPrice === 0) return 0;
-    return 1 - (orderbook.spread / orderbook.midPrice); // Higher = tighter spread
+    // For prediction markets, spread is already in decimal form (0-1)
+    // Convert to bps and normalize against max acceptable spread (1000 bps = 10%)
+    const spreadBps = orderbook.spread * 10000;
+    const maxAcceptableSpreadBps = 1000; // 10% spread
+    const tightness = 1 - Math.min(spreadBps / maxAcceptableSpreadBps, 1);
+    return tightness; // Higher = tighter spread (0 = 10%+ spread, 1 = 0% spread)
   }
 
   private calculateMarketMakerPresence(bids: OrderbookLevel[], asks: OrderbookLevel[]): number {
@@ -527,7 +530,9 @@ export class OrderFlowAnalyzer {
   }
 
   private getRelativeSpread(orderbook: OrderbookData): number {
-    return orderbook.midPrice > 0 ? orderbook.spread / orderbook.midPrice : 0;
+    // For prediction markets, spread is already in absolute percentage terms (0-1)
+    // No need to divide by midPrice - that would incorrectly make it vary by probability level
+    return orderbook.spread;
   }
 
   // Cleanup methods
