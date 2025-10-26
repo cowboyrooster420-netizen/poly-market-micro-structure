@@ -546,6 +546,12 @@ export class EarlyBot {
     // Send Discord alert through prioritized notification system
     if (this.config.discord.webhookUrl) {
       try {
+        // Refresh market data from cache to get latest spread from orderbook updates
+        const cachedMarket = this.polymarketService.getCachedMarket(signal.marketId);
+        if (cachedMarket) {
+          signal.market = cachedMarket;
+        }
+
         const { sent, decision } = await advancedLogger.timeOperation(
           () => this.prioritizedNotifier.processSignal(signal),
           'send_prioritized_alert',

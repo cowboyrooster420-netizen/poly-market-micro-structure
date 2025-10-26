@@ -340,6 +340,40 @@ export class DiscordAlerter {
       },
     ];
 
+    // Add market stats (spread, volume, quality)
+    const spreadBps = signal.market?.spread;
+    if (spreadBps !== undefined && spreadBps !== null) {
+      fields.push({
+        name: 'Spread',
+        value: `${spreadBps.toFixed(0)} bps`,
+        inline: true,
+      });
+    } else {
+      fields.push({
+        name: 'Spread',
+        value: 'N/A',
+        inline: true,
+      });
+    }
+
+    const volumeNum = signal.market?.volumeNum;
+    if (volumeNum !== undefined && volumeNum !== null) {
+      fields.push({
+        name: 'Volume',
+        value: `$${volumeNum >= 1000 ? (volumeNum / 1000).toFixed(1) + 'k' : volumeNum.toFixed(0)}`,
+        inline: true,
+      });
+    }
+
+    const qualityScore = signal.market?.qualityScore;
+    if (qualityScore !== undefined && qualityScore !== null) {
+      fields.push({
+        name: 'Quality',
+        value: `${qualityScore.toFixed(0)}/100`,
+        inline: true,
+      });
+    }
+
     // Add direction indicator if determinable
     const directionField = this.buildDirectionIndicator(signal);
     if (directionField) {
