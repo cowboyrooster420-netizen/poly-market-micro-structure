@@ -132,7 +132,10 @@ export class EarlyBot {
       // Set up event handlers
       this.microstructureDetector.onSignal(this.createSafeSignalHandler());
       this.microstructureDetector.onMicrostructureSignal(this.createSafeMicrostructureHandler());
-      
+      this.microstructureDetector.onOrderbookUpdate((orderbook) => {
+        this.polymarketService.updateMarketSpread(orderbook);
+      });
+
       // Test Discord connection if configured
       if (this.config.discord.webhookUrl) {
         try {

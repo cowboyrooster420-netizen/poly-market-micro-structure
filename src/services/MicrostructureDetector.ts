@@ -30,6 +30,7 @@ export class MicrostructureDetector {
   // Event handlers
   private onSignalHandler: ((signal: EarlySignal) => void) | null = null;
   private onMicrostructureSignalHandler: ((signal: MicrostructureSignal) => void) | null = null;
+  private onOrderbookUpdateHandler: ((orderbook: OrderbookData) => void) | null = null;
 
   // Performance tracking
   private signalCounts: Map<string, number> = new Map();
@@ -147,6 +148,10 @@ export class MicrostructureDetector {
     this.onMicrostructureSignalHandler = handler;
   }
 
+  onOrderbookUpdate(handler: (orderbook: OrderbookData) => void): void {
+    this.onOrderbookUpdateHandler = handler;
+  }
+
   // Getters for market data
   getMarketOrderbookMetrics(marketId: string): OrderbookMetrics | null {
     return this.orderbookAnalyzer.getMarketMetrics(marketId);
@@ -201,6 +206,11 @@ export class MicrostructureDetector {
     if (!this.isRunning || !this.trackedMarkets.has(orderbook.marketId)) return;
 
     try {
+      // Update market spread if handler is set
+      if (this.onOrderbookUpdateHandler) {
+        this.onOrderbookUpdateHandler(orderbook);
+      }
+
       // 🔥 ENHANCED: Process with advanced microstructure analyzer
       const enhancedMetrics = this.enhancedAnalyzer.processOrderbook(orderbook);
       

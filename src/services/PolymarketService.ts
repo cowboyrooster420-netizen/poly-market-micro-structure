@@ -22,6 +22,7 @@ function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: num
 export class PolymarketService {
   private config: BotConfig;
   protected categorizer: MarketCategorizer;
+  private marketCache: Map<string, Market> = new Map(); // Cache markets to update spread from orderbook
 
   constructor(config: BotConfig) {
     this.config = config;
@@ -296,10 +297,27 @@ export class PolymarketService {
       market.categoryScore = categoryResult.categoryScore;
       market.isBlacklisted = categoryResult.isBlacklisted;
 
+      // Cache market for spread updates from orderbook
+      this.marketCache.set(market.id, market);
+
       return market;
     } catch (error) {
       logger.warn('Failed to transform market data:', error);
       return null;
+    }
+  }
+
+  /**
+   * Update market spread from real-time orderbook data
+   * Call this when orderbook updates arrive via WebSocket
+   */
+  updateMarketSpread(orderbookData: OrderbookData): void {
+    const market = this.marketCache.get(orderbookData.marketId);
+    if (market && orderbookData.spread !== undefined) {
+      // Update the market's spread with the real-time orderbook spread
+      // Convert from absolute decimal to basis points (e.g., 0.027 -> 270)
+      market.spread = orderbookData.spread * 10000;
+      logger.debug(`Updated market ${orderbookData.marketId.substring(0, 8)}... spread: ${market.spread.toFixed(0)} bps`);
     }
   }
 
