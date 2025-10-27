@@ -251,10 +251,16 @@ export class PolymarketService {
         if (shouldDebug) logger.info(`✅ Format 3 (outcome_tokens): Found ${assetIds.length} asset IDs`);
       }
 
-      // Format 4: Use condition_id as fallback for WebSocket
-      if (!assetIds.length && data.condition_id) {
-        assetIds = [data.condition_id];
-        if (shouldDebug) logger.info(`⚠️  Format 4 (condition_id fallback): Using condition_id`);
+      // Format 4: clobTokenIds array (CLOB token IDs from Gamma API)
+      if (!assetIds.length && data.clobTokenIds && Array.isArray(data.clobTokenIds)) {
+        assetIds = data.clobTokenIds.filter(Boolean);
+        if (shouldDebug) logger.info(`✅ Format 4 (clobTokenIds): Found ${assetIds.length} asset IDs`);
+      }
+
+      // Format 5: Use condition_id/conditionId as fallback for WebSocket
+      if (!assetIds.length && (data.condition_id || data.conditionId)) {
+        assetIds = [data.condition_id || data.conditionId];
+        if (shouldDebug) logger.info(`⚠️  Format 5 (condition_id fallback): Using condition_id`);
       }
 
       // FINAL CHECK - Log if no assets found
