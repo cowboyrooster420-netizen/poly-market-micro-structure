@@ -61,10 +61,12 @@ export class PolymarketService {
 
     try {
       // Use Gamma API for active markets with rate limiting
+      // Request large limit to ensure good coverage of all categories,
+      // especially high-edge categories like earnings and CEO changes
       const response = await advancedLogger.timeOperation(
         () => polymarketRateLimiter.execute(async () => {
           return fetchWithTimeout(
-            `${this.config.apiUrls.gamma}/markets?active=true&closed=false&limit=1000`,
+            `${this.config.apiUrls.gamma}/markets?active=true&closed=false&limit=5000`,
             {},
             15000
           );
