@@ -268,11 +268,20 @@ export class PolymarketService {
         logger.warn('❌ NO ASSET IDS EXTRACTED! Market will have no WebSocket subscriptions!', {
           marketQuestion: data.question?.substring(0, 50),
           conditionId: data.condition_id || data.conditionId,
+          conditionIdLength: (data.condition_id || data.conditionId || '').length,
           allApiFields: Object.keys(data).sort().join(', '),
           clobTokenIdsValue: data.clobTokenIds,
           tokenFieldExists: !!data.tokens,
           assetIdFieldExists: !!data.asset_id,
-          outcomeTokensFieldExists: !!data.outcome_tokens
+          outcomeTokensFieldExists: !!data.outcome_tokens,
+          // Deployment status fields
+          deploying: data.deploying,
+          pendingDeployment: data.pendingDeployment,
+          ready: data.ready,
+          acceptingOrders: data.acceptingOrders,
+          enableOrderBook: data.enableOrderBook,
+          active: data.active,
+          closed: data.closed
         });
       }
 
