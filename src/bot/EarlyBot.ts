@@ -202,14 +202,13 @@ export class EarlyBot {
 
     // Get markets using categorizer's smart per-category volume thresholds
     // The categorizer already filters by appropriate volumes (e.g. $2k for earnings, $8k for politics)
+    // Track ALL markets that pass categorizer filtering (no artificial limit)
     const markets = await advancedLogger.timeOperation(
       () => this.polymarketService.getActiveMarkets(),
       'get_active_markets',
       { component: 'bot', operation: 'start' }
     );
-    const topMarkets = markets
-      .sort((a, b) => b.volumeNum - a.volumeNum)
-      .slice(0, this.config.maxMarketsToTrack);
+    const topMarkets = markets;
 
     // Record market metrics
     metricsCollector.recordMarketMetrics(topMarkets.length, 0);
@@ -217,7 +216,7 @@ export class EarlyBot {
     advancedLogger.info(`Found ${topMarkets.length} markets after categorizer filtering`, {
       component: 'bot',
       operation: 'market_discovery',
-      metadata: { marketCount: topMarkets.length, maxMarketsToTrack: this.config.maxMarketsToTrack }
+      metadata: { marketCount: topMarkets.length }
     });
     
     // Check how many markets have asset IDs for WebSocket subscriptions
@@ -384,14 +383,13 @@ export class EarlyBot {
 
     try {
       // Get markets using categorizer's smart per-category volume thresholds
+      // Track ALL markets that pass categorizer filtering (no artificial limit)
       const markets = await advancedLogger.timeOperation(
         () => this.polymarketService.getActiveMarkets(),
         'get_active_markets_refresh',
         { component: 'bot', operation: 'refresh_markets' }
       );
-      const topMarkets = markets
-        .sort((a, b) => b.volumeNum - a.volumeNum)
-        .slice(0, this.config.maxMarketsToTrack);
+      const topMarkets = markets;
 
       // Record refresh metrics
       const processingTime = Date.now() - startTime;
