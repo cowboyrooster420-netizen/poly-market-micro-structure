@@ -204,31 +204,28 @@ export class PolymarketService {
       // CRITICAL DEBUG: Always log first 3 markets to diagnose asset ID extraction issue
       const shouldDebug = this.marketCache.size < 3;
       if (shouldDebug) {
-        logger.info('🔍 DEBUGGING ASSET ID EXTRACTION - Market structure:', {
-          marketQuestion: data.question?.substring(0, 50),
-          allKeys: Object.keys(data).sort(),
-          tokens: data.tokens ? {
-            exists: true,
-            isArray: Array.isArray(data.tokens),
-            length: data.tokens.length,
-            firstToken: data.tokens[0] ? {
-              keys: Object.keys(data.tokens[0]).sort(),
-              values: {
-                token_id: data.tokens[0].token_id,
-                id: data.tokens[0].id,
-                asset_id: data.tokens[0].asset_id,
-                outcome: data.tokens[0].outcome
-              }
-            } : 'NO_TOKENS'
-          } : 'TOKENS_FIELD_MISSING',
-          directFields: {
-            has_asset_id: !!data.asset_id,
-            has_outcome_tokens: !!data.outcome_tokens,
-            has_condition_id: !!data.condition_id,
-            has_clobTokenIds: !!data.clobTokenIds,
-            condition_id_value: data.condition_id
+        logger.info(`🔍 DEBUGGING MARKET: ${data.question?.substring(0, 60)}`);
+        logger.info(`📋 ALL API FIELDS: ${Object.keys(data).sort().join(', ')}`);
+        logger.info(`🏷️  condition_id: ${data.condition_id || 'MISSING'}`);
+        logger.info(`🎯 asset_id field: ${data.asset_id || 'MISSING'}`);
+        logger.info(`🎯 outcome_tokens field: ${data.outcome_tokens || 'MISSING'}`);
+        logger.info(`🎯 clobTokenIds field: ${data.clobTokenIds || 'MISSING'}`);
+
+        if (data.tokens) {
+          logger.info(`📦 tokens array exists: length=${data.tokens.length}, isArray=${Array.isArray(data.tokens)}`);
+          if (data.tokens[0]) {
+            logger.info(`📦 First token keys: ${Object.keys(data.tokens[0]).sort().join(', ')}`);
+            logger.info(`📦 First token.token_id: ${data.tokens[0].token_id || 'MISSING'}`);
+            logger.info(`📦 First token.id: ${data.tokens[0].id || 'MISSING'}`);
+            logger.info(`📦 First token.asset_id: ${data.tokens[0].asset_id || 'MISSING'}`);
+            logger.info(`📦 First token.outcome: ${data.tokens[0].outcome || 'MISSING'}`);
+          } else {
+            logger.info(`📦 tokens array is EMPTY`);
           }
-        });
+        } else {
+          logger.info(`❌ NO tokens field in API response`);
+        }
+        logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
       }
 
       // Extract asset IDs from multiple possible formats
