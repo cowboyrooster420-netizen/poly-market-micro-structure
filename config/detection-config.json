@@ -232,7 +232,7 @@
       },
       "qualityFilters": {
         "minOpportunityScore": 30,
-        "minCategoryScore": 2,
+        "minCategoryScore": 1,
         "requireNonBlacklisted": true,
         "minVolumeRatio": 0.2
       },
@@ -323,11 +323,6 @@
           "coordinated_cross_market",
           "statistical_anomaly"
         ]
-      }
-    },
-    "alertPrioritization": {
-      "qualityFilters": {
-        "minCategoryScore": 1
       }
     }
   },
