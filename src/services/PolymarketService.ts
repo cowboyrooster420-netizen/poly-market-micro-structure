@@ -23,6 +23,7 @@ export class PolymarketService {
   private config: BotConfig;
   protected categorizer: MarketCategorizer;
   private marketCache: Map<string, Market> = new Map(); // Cache markets to update spread from orderbook
+  private assetIdToMarketId: Map<string, string> = new Map(); // Map asset IDs to market IDs for spread updates
 
   constructor(config: BotConfig) {
     this.config = config;
@@ -300,6 +301,15 @@ export class PolymarketService {
       // Cache market for spread updates from orderbook
       this.marketCache.set(market.id, market);
 
+      // Map asset IDs to market ID so orderbook updates can find the right market
+      // Orderbook messages come with asset IDs, not market IDs
+      const marketAssetIds = market.metadata?.assetIds;
+      if (marketAssetIds && Array.isArray(marketAssetIds)) {
+        for (const assetId of marketAssetIds) {
+          this.assetIdToMarketId.set(assetId, market.id);
+        }
+      }
+
       return market;
     } catch (error) {
       logger.warn('Failed to transform market data:', error);
@@ -312,12 +322,19 @@ export class PolymarketService {
    * Call this when orderbook updates arrive via WebSocket
    */
   updateMarketSpread(orderbookData: OrderbookData): void {
-    const market = this.marketCache.get(orderbookData.marketId);
+    // Orderbook data comes with either a market ID or an asset ID
+    // Try to resolve asset ID to market ID first
+    const incomingId = orderbookData.marketId;
+    const actualMarketId = this.assetIdToMarketId.get(incomingId) || incomingId;
+
+    const market = this.marketCache.get(actualMarketId);
     if (market && orderbookData.spread !== undefined) {
       // Update the market's spread with the real-time orderbook spread
       // Convert from absolute decimal to basis points (e.g., 0.027 -> 270)
       market.spread = orderbookData.spread * 10000;
-      logger.debug(`Updated market ${orderbookData.marketId.substring(0, 8)}... spread: ${market.spread.toFixed(0)} bps`);
+      logger.debug(`Updated market ${actualMarketId.substring(0, 8)}... spread: ${market.spread.toFixed(0)} bps (from ${incomingId === actualMarketId ? 'marketId' : 'assetId ' + incomingId.substring(0, 8) + '...'})`);
+    } else if (!market) {
+      logger.debug(`Market not found in cache for ID ${incomingId.substring(0, 8)}... (resolved to ${actualMarketId.substring(0, 8)}...)`);
     }
   }
 
