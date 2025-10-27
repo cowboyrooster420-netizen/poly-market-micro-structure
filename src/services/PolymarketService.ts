@@ -296,6 +296,56 @@ export class PolymarketService {
         timeToClose = endTime - Date.now();
       }
 
+      // Extract volume from multiple possible formats with fallback chain
+      let volumeStr = '0';
+      let volumeNum = 0;
+
+      // Format 1: Direct volume field (total lifetime volume)
+      if (data.volume) {
+        volumeStr = data.volume;
+        volumeNum = parseFloat(data.volume);
+        if (shouldDebug) logger.info(`✅ Volume Format 1 (volume): $${volumeNum.toFixed(0)}`);
+      }
+      // Format 2: volumeNum field (numeric total volume)
+      else if (data.volumeNum) {
+        volumeNum = parseFloat(data.volumeNum);
+        volumeStr = volumeNum.toString();
+        if (shouldDebug) logger.info(`✅ Volume Format 2 (volumeNum): $${volumeNum.toFixed(0)}`);
+      }
+      // Format 3: Calculate from CLOB + AMM volume (total)
+      else if (data.volumeClob || data.volumeAmm) {
+        const clobVol = parseFloat(data.volumeClob || '0');
+        const ammVol = parseFloat(data.volumeAmm || '0');
+        volumeNum = clobVol + ammVol;
+        volumeStr = volumeNum.toString();
+        if (shouldDebug) logger.info(`✅ Volume Format 3 (volumeClob + volumeAmm): $${volumeNum.toFixed(0)}`);
+      }
+      // Format 4: Use 24hr volume as fallback
+      else if (data.volume24hr || data.volume24hrClob || data.volume24hrAmm) {
+        const vol24hr = parseFloat(data.volume24hr || '0');
+        const clob24hr = parseFloat(data.volume24hrClob || '0');
+        const amm24hr = parseFloat(data.volume24hrAmm || '0');
+        volumeNum = Math.max(vol24hr, clob24hr + amm24hr);
+        volumeStr = volumeNum.toString();
+        if (shouldDebug) logger.info(`✅ Volume Format 4 (24hr volume): $${volumeNum.toFixed(0)}`);
+      }
+      // Format 5: Use 1 week volume as fallback
+      else if (data.volume1wk || data.volume1wkClob || data.volume1wkAmm) {
+        const vol1wk = parseFloat(data.volume1wk || '0');
+        const clob1wk = parseFloat(data.volume1wkClob || '0');
+        const amm1wk = parseFloat(data.volume1wkAmm || '0');
+        volumeNum = Math.max(vol1wk, clob1wk + amm1wk);
+        volumeStr = volumeNum.toString();
+        if (shouldDebug) logger.info(`✅ Volume Format 5 (1wk volume): $${volumeNum.toFixed(0)}`);
+      }
+
+      if (volumeNum === 0 && shouldDebug) {
+        logger.warn('⚠️  NO VOLUME EXTRACTED! Market may be filtered out', {
+          marketQuestion: data.question?.substring(0, 50),
+          availableVolumeFields: Object.keys(data).filter(k => k.toLowerCase().includes('volume')).join(', ')
+        });
+      }
+
       // Build initial market object
       const market: Market = {
         id: data.condition_id || data.id,
@@ -303,8 +353,8 @@ export class PolymarketService {
         description: data.description,
         outcomes,
         outcomePrices,
-        volume: data.volume || '0',
-        volumeNum: parseFloat(data.volume || '0'),
+        volume: volumeStr,
+        volumeNum: volumeNum,
         active: data.active !== undefined ? data.active : !data.closed,
         closed: data.closed || false,
         endDate,
