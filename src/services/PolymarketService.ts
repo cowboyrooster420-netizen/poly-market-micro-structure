@@ -60,30 +60,53 @@ export class PolymarketService {
     const startTime = Date.now();
 
     try {
-      // Use Gamma API for active markets with rate limiting
-      // Request large limit to ensure good coverage of all categories,
-      // especially high-edge categories like earnings and CEO changes
-      const response = await advancedLogger.timeOperation(
-        () => polymarketRateLimiter.execute(async () => {
-          return fetchWithTimeout(
-            `${this.config.apiUrls.gamma}/markets?active=true&closed=false&limit=5000`,
-            {},
-            15000
-          );
-        }),
-        'polymarket_get_active_markets',
-        { component: 'polymarket_service', operation: 'get_active_markets' }
-      );
+      // Fetch markets with pagination to ensure complete coverage
+      // API typically returns max 1000 per request, so we paginate
+      const allMarkets: any[] = [];
+      const batchSize = 1000;
+      const maxMarkets = 5000;
+      let offset = 0;
+      let hasMore = true;
 
-      if (!response.ok) {
-        throw new Error(`API request failed: ${response.status}`);
+      while (hasMore && allMarkets.length < maxMarkets) {
+        const response = await advancedLogger.timeOperation(
+          () => polymarketRateLimiter.execute(async () => {
+            return fetchWithTimeout(
+              `${this.config.apiUrls.gamma}/markets?active=true&closed=false&limit=${batchSize}&offset=${offset}`,
+              {},
+              15000
+            );
+          }),
+          'polymarket_get_active_markets_batch',
+          { component: 'polymarket_service', operation: 'get_active_markets', metadata: { offset, batchSize } }
+        );
+
+        if (!response.ok) {
+          throw new Error(`API request failed: ${response.status}`);
+        }
+
+        const markets: any = await response.json();
+        const marketsList = Array.isArray(markets) ? markets : [];
+
+        if (marketsList.length === 0) {
+          // No more markets available
+          hasMore = false;
+        } else {
+          allMarkets.push(...marketsList);
+          offset += marketsList.length;
+
+          // If we got fewer than requested, we've reached the end
+          if (marketsList.length < batchSize) {
+            hasMore = false;
+          }
+
+          logger.info(`Fetched ${marketsList.length} markets (offset ${offset - marketsList.length}, total: ${allMarkets.length})`);
+        }
       }
 
-      const markets: any = await response.json();
+      logger.info(`📥 Fetched ${allMarkets.length} total markets from Gamma API`);
 
-      // Gamma API returns array directly, already filtered for active/open markets
-      const marketsList = Array.isArray(markets) ? markets : [];
-      const transformedMarkets = this.transformMarkets(marketsList);
+      const transformedMarkets = this.transformMarkets(allMarkets);
 
       // Apply tier assignment (categorization + volume filtering + watchlist logic)
       const tierResult = this.categorizer.assignTiers(transformedMarkets);
