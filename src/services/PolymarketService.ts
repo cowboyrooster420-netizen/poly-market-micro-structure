@@ -60,24 +60,24 @@ export class PolymarketService {
     const startTime = Date.now();
 
     try {
-      // Fetch markets with pagination to ensure complete coverage
-      // API typically returns max 1000 per request, so we paginate
-      const allMarkets: any[] = [];
+      // Fetch via /events endpoint (recommended by API docs for complete market coverage)
+      // Events contain embedded markets, and we can order by volume for better prioritization
+      const allEvents: any[] = [];
       const batchSize = 1000;
-      const maxMarkets = 5000;
+      const maxEvents = 5000;
       let offset = 0;
       let hasMore = true;
 
-      while (hasMore && allMarkets.length < maxMarkets) {
+      while (hasMore && allEvents.length < maxEvents) {
         const response = await advancedLogger.timeOperation(
           () => polymarketRateLimiter.execute(async () => {
             return fetchWithTimeout(
-              `${this.config.apiUrls.gamma}/markets?active=true&closed=false&limit=${batchSize}&offset=${offset}`,
+              `${this.config.apiUrls.gamma}/events?active=true&closed=false&order=volume&ascending=false&limit=${batchSize}&offset=${offset}`,
               {},
               15000
             );
           }),
-          'polymarket_get_active_markets_batch',
+          'polymarket_get_active_events_batch',
           { component: 'polymarket_service', operation: 'get_active_markets', metadata: { offset, batchSize } }
         );
 
@@ -85,26 +85,45 @@ export class PolymarketService {
           throw new Error(`API request failed: ${response.status}`);
         }
 
-        const markets: any = await response.json();
-        const marketsList = Array.isArray(markets) ? markets : [];
+        const events: any = await response.json();
+        const eventsList = Array.isArray(events) ? events : [];
 
-        if (marketsList.length === 0) {
-          // No more markets available
+        if (eventsList.length === 0) {
+          // No more events available
           hasMore = false;
         } else {
-          allMarkets.push(...marketsList);
-          offset += marketsList.length;
+          allEvents.push(...eventsList);
+          offset += eventsList.length;
 
           // If we got fewer than requested, we've reached the end
-          if (marketsList.length < batchSize) {
+          if (eventsList.length < batchSize) {
             hasMore = false;
           }
 
-          logger.info(`Fetched ${marketsList.length} markets (offset ${offset - marketsList.length}, total: ${allMarkets.length})`);
+          logger.info(`Fetched ${eventsList.length} events (offset ${offset - eventsList.length}, total: ${allEvents.length})`);
         }
       }
 
-      logger.info(`📥 Fetched ${allMarkets.length} total markets from Gamma API`);
+      logger.info(`📥 Fetched ${allEvents.length} total events from Gamma API`);
+
+      // Extract markets from events (each event contains a markets array)
+      const allMarkets: any[] = [];
+      const marketIds = new Set<string>();
+
+      for (const event of allEvents) {
+        if (event.markets && Array.isArray(event.markets)) {
+          for (const market of event.markets) {
+            // Deduplicate by market ID (same market might appear in multiple events)
+            const marketId = market.id || market.condition_id || market.conditionId;
+            if (marketId && !marketIds.has(marketId)) {
+              marketIds.add(marketId);
+              allMarkets.push(market);
+            }
+          }
+        }
+      }
+
+      logger.info(`📥 Extracted ${allMarkets.length} unique markets from ${allEvents.length} events`);
 
       const transformedMarkets = this.transformMarkets(allMarkets);
 
