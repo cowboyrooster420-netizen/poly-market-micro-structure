@@ -201,13 +201,33 @@ export class PolymarketService {
 
   private transformMarket(data: any): Market | null {
     try {
-      // Debug log the raw market data to understand structure
-      if (process.env.LOG_LEVEL === 'debug') {
-        logger.debug('Raw market data sample:', {
-          keys: Object.keys(data),
-          hasTokens: !!data.tokens,
-          tokensLength: data.tokens?.length || 0,
-          tokensSample: data.tokens?.[0] ? Object.keys(data.tokens[0]) : [],
+      // CRITICAL DEBUG: Always log first 3 markets to diagnose asset ID extraction issue
+      const shouldDebug = this.marketCache.size < 3;
+      if (shouldDebug) {
+        logger.info('🔍 DEBUGGING ASSET ID EXTRACTION - Market structure:', {
+          marketQuestion: data.question?.substring(0, 50),
+          allKeys: Object.keys(data).sort(),
+          tokens: data.tokens ? {
+            exists: true,
+            isArray: Array.isArray(data.tokens),
+            length: data.tokens.length,
+            firstToken: data.tokens[0] ? {
+              keys: Object.keys(data.tokens[0]).sort(),
+              values: {
+                token_id: data.tokens[0].token_id,
+                id: data.tokens[0].id,
+                asset_id: data.tokens[0].asset_id,
+                outcome: data.tokens[0].outcome
+              }
+            } : 'NO_TOKENS'
+          } : 'TOKENS_FIELD_MISSING',
+          directFields: {
+            has_asset_id: !!data.asset_id,
+            has_outcome_tokens: !!data.outcome_tokens,
+            has_condition_id: !!data.condition_id,
+            has_clobTokenIds: !!data.clobTokenIds,
+            condition_id_value: data.condition_id
+          }
         });
       }
 
@@ -219,22 +239,33 @@ export class PolymarketService {
         assetIds = data.tokens
           .map((t: any) => t.token_id || t.id || t.asset_id)
           .filter(Boolean);
+        if (shouldDebug) logger.info(`✅ Format 1 (tokens array): Found ${assetIds.length} asset IDs`);
       }
 
       // Format 2: direct asset_id field
       if (!assetIds.length && data.asset_id) {
         assetIds = [data.asset_id];
+        if (shouldDebug) logger.info(`✅ Format 2 (direct asset_id): Found 1 asset ID`);
       }
 
       // Format 3: outcome_tokens array
       if (!assetIds.length && data.outcome_tokens) {
         assetIds = data.outcome_tokens.filter(Boolean);
+        if (shouldDebug) logger.info(`✅ Format 3 (outcome_tokens): Found ${assetIds.length} asset IDs`);
       }
 
       // Format 4: Use condition_id as fallback for WebSocket
       if (!assetIds.length && data.condition_id) {
         assetIds = [data.condition_id];
-        logger.debug(`Using condition_id as asset fallback for market: ${data.condition_id}`);
+        if (shouldDebug) logger.info(`⚠️  Format 4 (condition_id fallback): Using condition_id`);
+      }
+
+      // FINAL CHECK - Log if no assets found
+      if (assetIds.length === 0) {
+        logger.warn('❌ NO ASSET IDS EXTRACTED! Market will have no WebSocket subscriptions!', {
+          marketQuestion: data.question?.substring(0, 50),
+          conditionId: data.condition_id
+        });
       }
 
       // Extract outcomes and prices

@@ -39,7 +39,7 @@ describe('EnhancedMicrostructureAnalyzer', () => {
   });
 
   afterEach(() => {
-    analyzer.dispose();
+    // No cleanup needed - analyzer doesn't have dispose method
   });
 
   const createOrderbook = (bestBid: number, bestAsk: number, marketId: string = 'test_market'): OrderbookData => {
@@ -201,8 +201,8 @@ describe('EnhancedMicrostructureAnalyzer', () => {
       const orderbook = createOrderbook(0.50, 0.51);
       const metrics = analyzer.processOrderbook(orderbook);
 
-      expect(metrics!.imbalance).toBeGreaterThanOrEqual(-1);
-      expect(metrics!.imbalance).toBeLessThanOrEqual(1);
+      expect(metrics!.orderBookImbalance).toBeGreaterThanOrEqual(-1);
+      expect(metrics!.orderBookImbalance).toBeLessThanOrEqual(1);
     });
 
     test('should show positive imbalance for bid-heavy orderbook', () => {
@@ -224,7 +224,7 @@ describe('EnhancedMicrostructureAnalyzer', () => {
       };
 
       const metrics = analyzer.processOrderbook(bidHeavyOrderbook);
-      expect(metrics!.imbalance).toBeGreaterThan(0);
+      expect(metrics!.orderBookImbalance).toBeGreaterThan(0);
     });
 
     test('should show negative imbalance for ask-heavy orderbook', () => {
@@ -246,7 +246,7 @@ describe('EnhancedMicrostructureAnalyzer', () => {
       };
 
       const metrics = analyzer.processOrderbook(askHeavyOrderbook);
-      expect(metrics!.imbalance).toBeLessThan(0);
+      expect(metrics!.orderBookImbalance).toBeLessThan(0);
     });
   });
 
@@ -256,7 +256,7 @@ describe('EnhancedMicrostructureAnalyzer', () => {
       const metrics = analyzer.processOrderbook(orderbook);
 
       expect(metrics).toBeDefined();
-      expect(metrics!.imbalance).toBeDefined();
+      expect(metrics!.orderBookImbalance).toBeDefined();
       expect(metrics!.spreadBps).toBeDefined();
       expect(metrics!.spreadChange).toBeDefined();
     });

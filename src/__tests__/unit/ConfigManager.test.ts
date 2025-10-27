@@ -308,7 +308,8 @@ describe('ConfigManager', () => {
             minConfidence: originalConfig.detection.signals.volumeSpike.minConfidence
           },
           priceMovement: originalConfig.detection.signals.priceMovement,
-          crossMarketCorrelation: originalConfig.detection.signals.crossMarketCorrelation
+          crossMarketCorrelation: originalConfig.detection.signals.crossMarketCorrelation,
+          activityDetection: originalConfig.detection.signals.activityDetection
         }
       });
 
