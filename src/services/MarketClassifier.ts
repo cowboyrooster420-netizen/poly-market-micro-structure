@@ -91,13 +91,13 @@ export class MarketClassifier {
     }
 
     if (daysToResolution < this.config.minDaysToResolution) {
-      reasons.push(`Resolves too soon (${daysToResolution} days)`);
-      return -0.2;
+      reasons.push(`Resolves soon (${daysToResolution} days)`);
+      return 0;  // Don't penalize short-term markets
     }
 
     if (daysToResolution > this.config.maxDaysToResolution) {
-      reasons.push(`Resolves too far out (${daysToResolution} days, max ${this.config.maxDaysToResolution})`);
-      return -0.3;
+      reasons.push(`Resolves far out (${daysToResolution} days)`);
+      return 0;  // Don't penalize long-term markets
     }
 
     // Optimal range: 1-90 days
