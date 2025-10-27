@@ -89,6 +89,26 @@ export class PolymarketService {
       // Return combined ACTIVE + WATCHLIST markets (ignore IGNORED tier)
       const monitoredMarkets = [...tierResult.active, ...tierResult.watchlist];
 
+      // Analyze asset ID coverage by category to diagnose extraction issues
+      const assetIdStats: Record<string, {with: number, without: number}> = {};
+      const marketsWithAssets = monitoredMarkets.filter(m => m.metadata?.assetIds && m.metadata.assetIds.length > 0);
+      const marketsWithoutAssets = monitoredMarkets.filter(m => !m.metadata?.assetIds || m.metadata.assetIds.length === 0);
+
+      for (const market of marketsWithAssets) {
+        const cat = market.category || 'uncategorized';
+        if (!assetIdStats[cat]) assetIdStats[cat] = {with: 0, without: 0};
+        assetIdStats[cat].with++;
+      }
+      for (const market of marketsWithoutAssets) {
+        const cat = market.category || 'uncategorized';
+        if (!assetIdStats[cat]) assetIdStats[cat] = {with: 0, without: 0};
+        assetIdStats[cat].without++;
+      }
+
+      logger.info(`📊 Asset ID coverage by category: ${Object.entries(assetIdStats)
+        .map(([cat, stats]) => `${cat}(${stats.with}✅/${stats.without}❌)`)
+        .join(', ')}`);
+
       // Calculate opportunity score statistics
       const scores = monitoredMarkets.map(m => m.opportunityScore || 0);
       const avgScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
