@@ -36,7 +36,6 @@ describe('MicrostructureDetector', () => {
         orderbookImbalanceThreshold: 0.3,
         spreadAnomalyThreshold: 2.0,
         liquidityShiftThreshold: 20,
-        momentumThreshold: 5,
         tickBufferSize: 1000,
       },
       discord: {

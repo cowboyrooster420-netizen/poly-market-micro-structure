@@ -68,14 +68,14 @@ describe('OrderFlowAnalyzer', () => {
   describe('calculateSpreadTightness', () => {
     test('should return 1.0 for zero spread (tightest possible)', () => {
       const orderbook = createOrderbook(0.50, 0.50);  // Locked market
-      const metrics = analyzer.analyzeOrderFlow(orderbook);
+      const metrics = (analyzer as any).calculateFlowMetrics(orderbook);
 
       expect(metrics.spreadTightness).toBeCloseTo(1.0, 2);
     });
 
     test('should return ~0 for very wide spread (10% or more)', () => {
       const orderbook = createOrderbook(0.25, 0.75);  // 50% spread >> 10%
-      const metrics = analyzer.analyzeOrderFlow(orderbook);
+      const metrics = (analyzer as any).calculateFlowMetrics(orderbook);
 
       // Should be close to 0 since spread is way wider than 10%
       expect(metrics.spreadTightness).toBeLessThan(0.1);
@@ -83,7 +83,7 @@ describe('OrderFlowAnalyzer', () => {
 
     test('should return 0.9 for 100 bps (1%) spread', () => {
       const orderbook = createOrderbook(0.495, 0.505);  // 1% spread
-      const metrics = analyzer.analyzeOrderFlow(orderbook);
+      const metrics = (analyzer as any).calculateFlowMetrics(orderbook);
 
       // Tightness = 1 - (100 / 1000) = 0.9
       expect(metrics.spreadTightness).toBeCloseTo(0.9, 2);
@@ -91,7 +91,7 @@ describe('OrderFlowAnalyzer', () => {
 
     test('should return 0.5 for 500 bps (5%) spread', () => {
       const orderbook = createOrderbook(0.475, 0.525);  // 5% spread
-      const metrics = analyzer.analyzeOrderFlow(orderbook);
+      const metrics = (analyzer as any).calculateFlowMetrics(orderbook);
 
       // Tightness = 1 - (500 / 1000) = 0.5
       expect(metrics.spreadTightness).toBeCloseTo(0.5, 2);
@@ -103,9 +103,9 @@ describe('OrderFlowAnalyzer', () => {
       const midPriceOrderbook = createOrderbook(0.49, 0.51, 'mid');    // 2% at 50%
       const highPriceOrderbook = createOrderbook(0.88, 0.90, 'high');  // 2% at 89%
 
-      const lowMetrics = analyzer.analyzeOrderFlow(lowPriceOrderbook);
-      const midMetrics = analyzer.analyzeOrderFlow(midPriceOrderbook);
-      const highMetrics = analyzer.analyzeOrderFlow(highPriceOrderbook);
+      const lowMetrics = (analyzer as any).calculateFlowMetrics(lowPriceOrderbook);
+      const midMetrics = (analyzer as any).calculateFlowMetrics(midPriceOrderbook);
+      const highMetrics = (analyzer as any).calculateFlowMetrics(highPriceOrderbook);
 
       // All should have same tightness: 1 - (200 / 1000) = 0.8
       expect(lowMetrics.spreadTightness).toBeCloseTo(0.8, 2);
@@ -169,7 +169,7 @@ describe('OrderFlowAnalyzer', () => {
   describe('Regression Tests', () => {
     test('spread tightness should NOT use old formula (spread / midPrice)', () => {
       const orderbook = createOrderbook(0.40, 0.44);  // 4¢ spread, midPrice = 0.42
-      const metrics = analyzer.analyzeOrderFlow(orderbook);
+      const metrics = (analyzer as any).calculateFlowMetrics(orderbook);
 
       // OLD WRONG WAY: 1 - (0.04 / 0.42) ≈ 0.905
       const oldBuggyValue = 1 - (orderbook.spread / orderbook.midPrice);
@@ -187,8 +187,8 @@ describe('OrderFlowAnalyzer', () => {
       const lowProbMarket = createOrderbook(0.05, 0.10, 'low');   // 5% at ~7.5% prob
       const highProbMarket = createOrderbook(0.90, 0.95, 'high'); // 5% at ~92.5% prob
 
-      const lowMetrics = analyzer.analyzeOrderFlow(lowProbMarket);
-      const highMetrics = analyzer.analyzeOrderFlow(highProbMarket);
+      const lowMetrics = (analyzer as any).calculateFlowMetrics(lowProbMarket);
+      const highMetrics = (analyzer as any).calculateFlowMetrics(highProbMarket);
 
       // Both should have same tightness since they have same absolute spread
       expect(lowMetrics.spreadTightness).toBeCloseTo(highMetrics.spreadTightness, 2);
@@ -203,11 +203,11 @@ describe('OrderFlowAnalyzer', () => {
   describe('analyzeOrderFlow integration', () => {
     test('should analyze orderbook and return valid metrics', () => {
       const orderbook = createOrderbook(0.48, 0.52);
-      const metrics = analyzer.analyzeOrderFlow(orderbook);
+      const metrics = (analyzer as any).calculateFlowMetrics(orderbook);
 
       // Check all expected fields exist
       expect(metrics).toBeDefined();
-      expect(metrics.imbalance).toBeDefined();
+      expect(metrics.bidAskImbalance).toBeDefined();
       expect(metrics.spreadTightness).toBeDefined();
       expect(metrics.marketMakerPresence).toBeDefined();
 
@@ -216,8 +216,8 @@ describe('OrderFlowAnalyzer', () => {
       expect(metrics.spreadTightness).toBeLessThanOrEqual(1);
 
       // Imbalance should be in valid range [-1, 1]
-      expect(metrics.imbalance).toBeGreaterThanOrEqual(-1);
-      expect(metrics.imbalance).toBeLessThanOrEqual(1);
+      expect(metrics.bidAskImbalance).toBeGreaterThanOrEqual(-1);
+      expect(metrics.bidAskImbalance).toBeLessThanOrEqual(1);
     });
 
     test('should handle edge case of empty orderbook gracefully', () => {
@@ -233,7 +233,7 @@ describe('OrderFlowAnalyzer', () => {
       };
 
       // Should not throw
-      expect(() => analyzer.analyzeOrderFlow(emptyOrderbook)).not.toThrow();
+      expect(() => (analyzer as any).calculateFlowMetrics(emptyOrderbook)).not.toThrow();
     });
   });
 });

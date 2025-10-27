@@ -172,7 +172,7 @@ describe('OrderbookAnalyzer', () => {
       // Should detect spread anomaly
       const spreadSignal = signals.find(s => s.type === 'spread_anomaly');
 
-      if (spreadSignal) {
+      if (spreadSignal && spreadSignal.data.context) {
         // Check that context has correct values
         expect(spreadSignal.data.context).toBeDefined();
         expect(spreadSignal.data.context.spreadPercent).toBeCloseTo(20.0, 1);  // 20%
