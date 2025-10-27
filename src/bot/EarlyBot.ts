@@ -200,23 +200,24 @@ export class EarlyBot {
     await this.signalPerformanceTracker.start();
     logger.info('Signal performance tracking started (P&L updates every 30 minutes)');
 
-    // Get high-volume markets for tracking
+    // Get markets using categorizer's smart per-category volume thresholds
+    // The categorizer already filters by appropriate volumes (e.g. $2k for earnings, $8k for politics)
     const markets = await advancedLogger.timeOperation(
-      () => this.polymarketService.getMarketsWithMinVolume(this.config.minVolumeThreshold),
-      'get_markets_with_min_volume',
+      () => this.polymarketService.getActiveMarkets(),
+      'get_active_markets',
       { component: 'bot', operation: 'start' }
     );
     const topMarkets = markets
       .sort((a, b) => b.volumeNum - a.volumeNum)
       .slice(0, this.config.maxMarketsToTrack);
-    
+
     // Record market metrics
     metricsCollector.recordMarketMetrics(topMarkets.length, 0);
-    
-    advancedLogger.info(`Found ${topMarkets.length} markets above volume threshold`, {
+
+    advancedLogger.info(`Found ${topMarkets.length} markets after categorizer filtering`, {
       component: 'bot',
       operation: 'market_discovery',
-      metadata: { marketCount: topMarkets.length, minVolume: this.config.minVolumeThreshold }
+      metadata: { marketCount: topMarkets.length, maxMarketsToTrack: this.config.maxMarketsToTrack }
     });
     
     // Check how many markets have asset IDs for WebSocket subscriptions
@@ -382,20 +383,20 @@ export class EarlyBot {
     });
 
     try {
-      // Get current high-volume markets
+      // Get markets using categorizer's smart per-category volume thresholds
       const markets = await advancedLogger.timeOperation(
-        () => this.polymarketService.getMarketsWithMinVolume(this.config.minVolumeThreshold),
-        'get_markets_for_refresh',
+        () => this.polymarketService.getActiveMarkets(),
+        'get_active_markets_refresh',
         { component: 'bot', operation: 'refresh_markets' }
       );
       const topMarkets = markets
         .sort((a, b) => b.volumeNum - a.volumeNum)
         .slice(0, this.config.maxMarketsToTrack);
-      
+
       // Record refresh metrics
       const processingTime = Date.now() - startTime;
       metricsCollector.recordMarketMetrics(topMarkets.length, processingTime);
-      
+
       advancedLogger.info(`📊 Analyzing ${topMarkets.length} active markets`, {
         component: 'bot',
         operation: 'market_analysis',
