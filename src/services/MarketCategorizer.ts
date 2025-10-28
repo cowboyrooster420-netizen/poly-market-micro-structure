@@ -963,22 +963,31 @@ export class MarketCategorizer {
     for (const market of markets) {
       const assignment = this.assignTier(market);
 
-      // Calculate opportunity score for the market
-      const oppScore = this.calculateOpportunityScore(market);
-
       // Attach tier info to market
       market.tier = assignment.tier;
       market.tierReason = assignment.reason;
       market.tierPriority = assignment.priority;
       market.tierUpdatedAt = Date.now();
 
-      // Attach opportunity score to market
-      market.opportunityScore = oppScore.total;
-      market.volumeScore = oppScore.volumeScore;
-      market.edgeScore = oppScore.edgeScore;
-      market.catalystScore = oppScore.catalystScore;
-      market.qualityScore = oppScore.qualityScore;
-      market.scoreUpdatedAt = Date.now();
+      // PERFORMANCE OPTIMIZATION: Only calculate expensive opportunity scores for monitored markets
+      // Skip IGNORED tier to avoid scoring 2000+ markets that won't be tracked
+      if (assignment.tier !== MarketTier.IGNORED) {
+        const oppScore = this.calculateOpportunityScore(market);
+        market.opportunityScore = oppScore.total;
+        market.volumeScore = oppScore.volumeScore;
+        market.edgeScore = oppScore.edgeScore;
+        market.catalystScore = oppScore.catalystScore;
+        market.qualityScore = oppScore.qualityScore;
+        market.scoreUpdatedAt = Date.now();
+      } else {
+        // Set minimal scores for ignored markets
+        market.opportunityScore = 0;
+        market.volumeScore = 0;
+        market.edgeScore = 0;
+        market.catalystScore = 0;
+        market.qualityScore = 0;
+        market.scoreUpdatedAt = Date.now();
+      }
 
       // Sort into tier buckets
       switch (assignment.tier) {
