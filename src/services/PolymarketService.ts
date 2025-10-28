@@ -62,9 +62,10 @@ export class PolymarketService {
     try {
       // Fetch via /events endpoint (recommended by API docs for complete market coverage)
       // Events contain embedded markets, and we can order by volume for better prioritization
+      // Reduced from 5000 to 2000 for better performance (5074 markets was causing 5.8s response time)
       const allEvents: any[] = [];
       const batchSize = 1000;
-      const maxEvents = 5000;
+      const maxEvents = 2000;
       let offset = 0;
       let hasMore = true;
 
