@@ -354,10 +354,14 @@ export class PolymarketService {
       const outcomes = data.outcomes || (data.tokens ? data.tokens.map((t: any) => t.outcome) : ['Yes', 'No']);
       const outcomePrices = this.extractPrices(data);
 
-      // Spread will be calculated from real-time orderbook data
-      // The initial spread from outcome prices is misleading - it shows the outcome range, not bid-ask spread
-      // Real bid-ask spread comes from WebSocket orderbook updates
+      // Initial spread estimate from API data (will be updated with real-time orderbook data)
+      // API provides a spread field that we can use as initial estimate before WebSocket updates
       let spread: number | undefined;
+      if (data.spread !== undefined) {
+        // API spread is already in decimal format (e.g., 0.027)
+        // Convert to basis points: 0.027 -> 270 bps
+        spread = parseFloat(data.spread) * 10000;
+      }
 
       // Calculate market age
       let marketAge: number | undefined;
