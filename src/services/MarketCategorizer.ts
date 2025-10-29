@@ -217,7 +217,8 @@ export class MarketCategorizer {
     'price target',
     'trade at',
     'trading above',
-    'trading below'
+    'trading below',
+    'mvp'  // Filter out NBA/MLB MVP markets (too spammy)
   ];
 
   /**
