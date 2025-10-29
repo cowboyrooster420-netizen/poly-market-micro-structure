@@ -1,6 +1,6 @@
 import { PriceHistoryTracker } from './PriceHistoryTracker';
 import { Market, EarlySignal } from '../types';
-import { advancedLogger as logger } from '../utils/Logger';
+import { advancedLogger as logger } from '../utils/AdvancedLogger';
 
 export interface CorrelationSignal {
   markets: string[];
@@ -67,7 +67,11 @@ export class CrossMarketCorrelationDetector {
     );
 
     if (marketsWithHistory.length < this.config.minMarketsForSignal) {
-      logger.debug(`Not enough markets with price history: ${marketsWithHistory.length}/${markets.length}`);
+      logger.info(`Not enough markets with price history: ${marketsWithHistory.length}/${markets.length}`, {
+        component: 'cross_market_detector',
+        operation: 'detect_coordination',
+        metadata: { marketsWithHistory: marketsWithHistory.length, totalMarkets: markets.length }
+      });
       return null;
     }
 
@@ -131,9 +135,13 @@ export class CrossMarketCorrelationDetector {
     const baselineCorrelation = this.getBaselineCorrelation(markets[0].category || 'uncategorized');
     const correlationSpike = avgCorrelation - baselineCorrelation;
 
-    logger.debug(`Cross-market analysis: correlation=${avgCorrelation.toFixed(2)}, ` +
+    logger.info(`Cross-market analysis: correlation=${avgCorrelation.toFixed(2)}, ` +
       `baseline=${baselineCorrelation.toFixed(2)}, priceChange=${avgPriceChange.toFixed(1)}%, ` +
-      `volumeIncrease=${avgVolumeIncrease.toFixed(2)}x`);
+      `volumeIncrease=${avgVolumeIncrease.toFixed(2)}x`, {
+      component: 'cross_market_detector',
+      operation: 'analyze_correlation',
+      metadata: { avgCorrelation, baselineCorrelation, avgPriceChange, avgVolumeIncrease }
+    });
 
     // Signal conditions:
     // 1. High correlation (above threshold)
@@ -292,7 +300,11 @@ export class CrossMarketCorrelationDetector {
     // Check each category for coordinated movement
     for (const [category, categoryMarkets] of categoryGroups.entries()) {
       if (categoryMarkets.length >= this.config.minMarketsForSignal) {
-        logger.debug(`Checking ${categoryMarkets.length} ${category} markets for correlation...`);
+        logger.info(`Checking ${categoryMarkets.length} ${category} markets for correlation...`, {
+          component: 'cross_market_detector',
+          operation: 'check_category',
+          metadata: { category, marketCount: categoryMarkets.length }
+        });
         const signal = this.detectCoordinatedMovement(categoryMarkets);
         if (signal) {
           signals.push(signal);
@@ -394,6 +406,10 @@ export class CrossMarketCorrelationDetector {
    */
   updateConfig(newConfig: Partial<CrossMarketConfig>): void {
     this.config = { ...this.config, ...newConfig };
-    logger.info('Cross-market correlation config updated', { config: this.config });
+    logger.info('Cross-market correlation config updated', {
+      component: 'cross_market_detector',
+      operation: 'update_config',
+      metadata: { config: this.config }
+    });
   }
 }

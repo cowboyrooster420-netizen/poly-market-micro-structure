@@ -1,6 +1,6 @@
 import { PriceRingBuffer } from '../utils/RingBuffer';
 import { PricePoint, Market } from '../types';
-import { advancedLogger as logger } from '../utils/Logger';
+import { advancedLogger as logger } from '../utils/AdvancedLogger';
 
 /**
  * Tracks historical price data for markets with bounded memory
@@ -55,7 +55,11 @@ export class PriceHistoryTracker {
       buffer = new PriceRingBuffer(this.bufferSize);
       this.priceBuffers.set(marketId, buffer);
 
-      logger.debug(`Created price history buffer for market ${marketId.substring(0, 8)}...`);
+      logger.info(`Created price history buffer for market ${marketId.substring(0, 8)}...`, {
+        component: 'price_history_tracker',
+        operation: 'create_buffer',
+        metadata: { marketId: marketId.substring(0, 8) }
+      });
     }
 
     // Add price point
@@ -201,7 +205,11 @@ export class PriceHistoryTracker {
       this.priceBuffers.delete(oldestMarketId);
       this.lastUpdateTime.delete(oldestMarketId);
 
-      logger.debug(`Evicted price history for market ${oldestMarketId.substring(0, 8)}... (LRU policy)`);
+      logger.info(`Evicted price history for market ${oldestMarketId.substring(0, 8)}... (LRU policy)`, {
+        component: 'price_history_tracker',
+        operation: 'evict_market',
+        metadata: { marketId: oldestMarketId.substring(0, 8) }
+      });
     }
   }
 
