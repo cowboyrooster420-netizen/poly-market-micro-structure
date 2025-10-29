@@ -1,4 +1,4 @@
-import { TickData, OrderbookData } from '../types';
+import { TickData, OrderbookData, PricePoint } from '../types';
 
 export class RingBuffer<T> {
   private buffer: T[];
@@ -182,7 +182,161 @@ export class OrderbookBuffer extends RingBuffer<OrderbookData> {
     const spreads = orderbooks.map(ob => ob.spread);
     const avg = spreads.reduce((sum, spread) => sum + spread, 0) / spreads.length;
     const variance = spreads.reduce((sum, spread) => sum + Math.pow(spread - avg, 2), 0) / spreads.length;
-    
+
     return Math.sqrt(variance);
+  }
+}
+
+/**
+ * Circular buffer for storing historical price data with bounded memory
+ * Used for cross-market correlation detection and price trend analysis
+ */
+export class PriceRingBuffer extends RingBuffer<PricePoint> {
+  constructor(size: number = 1000) {
+    super(size);
+  }
+
+  dispose(): void {
+    super.dispose();
+  }
+
+  /**
+   * Get price points within a time window
+   */
+  getPricesInWindow(windowMs: number): PricePoint[] {
+    return this.getWithinTimeWindow(windowMs, (point) => point.timestamp);
+  }
+
+  /**
+   * Get recent N price points
+   */
+  getRecentPrices(count: number): PricePoint[] {
+    return this.getLast(count);
+  }
+
+  /**
+   * Calculate price change percentage over a time window
+   * Returns percentage change from oldest to newest price in window
+   */
+  calculatePriceChange(windowMs: number): number {
+    const prices = this.getPricesInWindow(windowMs);
+    if (prices.length < 2) return 0;
+
+    const oldestPrice = prices[0].price;
+    const newestPrice = prices[prices.length - 1].price;
+
+    return oldestPrice > 0 ? ((newestPrice - oldestPrice) / oldestPrice) * 100 : 0;
+  }
+
+  /**
+   * Calculate average price over a time window
+   */
+  getAveragePrice(windowMs?: number): number {
+    const prices = windowMs ? this.getPricesInWindow(windowMs) : this.getAll();
+    if (prices.length === 0) return 0;
+
+    const sum = prices.reduce((acc, point) => acc + point.price, 0);
+    return sum / prices.length;
+  }
+
+  /**
+   * Calculate price volatility (standard deviation) over a time window
+   */
+  getPriceVolatility(windowMs?: number): number {
+    const prices = windowMs ? this.getPricesInWindow(windowMs) : this.getAll();
+    if (prices.length < 2) return 0;
+
+    const avg = this.getAveragePrice(windowMs);
+    const variance = prices.reduce((sum, point) => {
+      return sum + Math.pow(point.price - avg, 2);
+    }, 0) / prices.length;
+
+    return Math.sqrt(variance);
+  }
+
+  /**
+   * Get price at specific timestamp (or closest before it)
+   */
+  getPriceAtTime(timestamp: number): PricePoint | null {
+    const all = this.getAll();
+    if (all.length === 0) return null;
+
+    // Find closest price point at or before timestamp
+    let closest: PricePoint | null = null;
+    let minDiff = Infinity;
+
+    for (const point of all) {
+      if (point.timestamp <= timestamp) {
+        const diff = timestamp - point.timestamp;
+        if (diff < minDiff) {
+          minDiff = diff;
+          closest = point;
+        }
+      }
+    }
+
+    return closest;
+  }
+
+  /**
+   * Calculate rolling correlation with another price buffer
+   * Returns Pearson correlation coefficient (-1 to 1)
+   */
+  calculateCorrelation(other: PriceRingBuffer, windowMs: number): number {
+    const thisPrices = this.getPricesInWindow(windowMs);
+    const otherPrices = other.getPricesInWindow(windowMs);
+
+    if (thisPrices.length < 2 || otherPrices.length < 2) {
+      return 0;
+    }
+
+    // Align timestamps - match up closest prices
+    const pairs: Array<{ x: number; y: number }> = [];
+
+    for (const thisPoint of thisPrices) {
+      const otherPoint = other.getPriceAtTime(thisPoint.timestamp);
+      if (otherPoint) {
+        // Calculate returns instead of absolute prices for better correlation
+        const thisReturn = thisPoint.price;
+        const otherReturn = otherPoint.price;
+        pairs.push({ x: thisReturn, y: otherReturn });
+      }
+    }
+
+    if (pairs.length < 2) return 0;
+
+    // Calculate Pearson correlation
+    const n = pairs.length;
+    const sumX = pairs.reduce((sum, p) => sum + p.x, 0);
+    const sumY = pairs.reduce((sum, p) => sum + p.y, 0);
+    const sumXY = pairs.reduce((sum, p) => sum + p.x * p.y, 0);
+    const sumX2 = pairs.reduce((sum, p) => sum + p.x * p.x, 0);
+    const sumY2 = pairs.reduce((sum, p) => sum + p.y * p.y, 0);
+
+    const numerator = (n * sumXY) - (sumX * sumY);
+    const denominator = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+
+    if (denominator === 0) return 0;
+
+    return numerator / denominator;
+  }
+
+  /**
+   * Calculate price returns (percentage changes between consecutive points)
+   */
+  calculateReturns(windowMs?: number): number[] {
+    const prices = windowMs ? this.getPricesInWindow(windowMs) : this.getAll();
+    if (prices.length < 2) return [];
+
+    const returns: number[] = [];
+    for (let i = 1; i < prices.length; i++) {
+      const prevPrice = prices[i - 1].price;
+      const currPrice = prices[i].price;
+      if (prevPrice > 0) {
+        returns.push(((currPrice - prevPrice) / prevPrice) * 100);
+      }
+    }
+
+    return returns;
   }
 }
