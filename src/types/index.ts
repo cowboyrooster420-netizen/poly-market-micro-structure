@@ -94,6 +94,13 @@ export interface TickData {
   size: number;
 }
 
+export interface PricePoint {
+  timestamp: number;
+  price: number;
+  volume: number;
+  spread?: number;
+}
+
 export interface OrderbookLevel {
   price: number;
   size: number;

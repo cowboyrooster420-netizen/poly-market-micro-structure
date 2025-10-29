@@ -7,6 +7,8 @@ import { DiscordAlerter } from '../services/DiscordAlerter';
 import { PrioritizedDiscordNotifier } from '../services/PrioritizedDiscordNotifier';
 import { TopicClusteringEngine } from '../services/TopicClusteringEngine';
 import { SignalPerformanceTracker } from '../services/SignalPerformanceTracker';
+import { PriceHistoryTracker } from '../services/PriceHistoryTracker';
+import { CrossMarketCorrelationDetector } from '../services/CrossMarketCorrelationDetector';
 import { DatabaseManager } from '../data/database';
 import { DataAccessLayer } from '../data/DataAccessLayer';
 import { getDatabaseConfig, validateDatabaseConfig } from '../config/database.config';
@@ -28,6 +30,8 @@ export class EarlyBot {
   private prioritizedNotifier: PrioritizedDiscordNotifier;
   private topicClusteringEngine: TopicClusteringEngine;
   private signalPerformanceTracker: SignalPerformanceTracker;
+  private priceHistoryTracker: PriceHistoryTracker;
+  private crossMarketDetector: CrossMarketCorrelationDetector;
   private isRunning = false;
   private intervalId?: NodeJS.Timeout;
   private performanceReportInterval?: NodeJS.Timeout;
@@ -75,6 +79,19 @@ export class EarlyBot {
     this.prioritizedNotifier = new PrioritizedDiscordNotifier(this.config);
     this.topicClusteringEngine = new TopicClusteringEngine();
     this.signalPerformanceTracker = new SignalPerformanceTracker(this.database);
+
+    // Initialize price tracking and cross-market detection
+    this.priceHistoryTracker = new PriceHistoryTracker({
+      maxMarketsTracked: 500,
+      bufferSize: 1000,
+      minUpdateIntervalMs: 30000 // 30 seconds between updates
+    });
+    this.crossMarketDetector = new CrossMarketCorrelationDetector(this.priceHistoryTracker, {
+      minCorrelation: 0.7,
+      minMarketsForSignal: 3,
+      volumeConfirmationThreshold: 1.5,
+      minPriceChangePercent: 2
+    });
   }
 
   async initialize(): Promise<void> {
@@ -419,9 +436,8 @@ export class EarlyBot {
       );
       
       // 🔍 DETECT COORDINATED CROSS-MARKET MOVEMENTS (Information Leak Detection)
-      // DISABLED: Uses fake random data instead of real price data - generates false signals
-      // TODO: Reimplement with actual historical price data tracking
-      // await this.detectCrossMarketLeaks(topMarkets);
+      // Now uses real price history tracking - detects actual coordinated movements
+      await this.detectCrossMarketLeaks(topMarkets);
       
       // Process any detected signals
       for (const signal of signals) {
@@ -648,62 +664,57 @@ export class EarlyBot {
 
   private async detectCrossMarketLeaks(markets: Market[]): Promise<void> {
     try {
-      // Get all entity clusters to check for coordinated movements
-      const entityClusters = this.topicClusteringEngine.getAllEntityClusters();
-      
-      for (const entityCluster of entityClusters) {
-        if (entityCluster.marketCount < 2) continue; // Need at least 2 markets for correlation
-        
-        const entityMarkets = this.topicClusteringEngine.getEntityMarkets(entityCluster.entity);
-        if (entityMarkets.length < 2) continue;
-        
-        // Calculate simple price changes (placeholder - in real implementation would use historical data)
-        const priceChanges = new Map<string, number>();
-        for (const market of entityMarkets) {
-          // For now, use volume change as a proxy for price movement
-          // In real implementation, you'd track actual price changes over time
-          const volumeChange = Math.random() * 10 - 5; // Placeholder random change -5% to +5%
-          priceChanges.set(market.id, volumeChange);
-        }
-        
-        // Detect coordinated movements
-        const coordinatedMove = this.topicClusteringEngine.detectCoordinatedMovements(
-          entityCluster.entity,
-          priceChanges,
-          2.0 // 2 sigma threshold
-        );
-        
-        if (coordinatedMove) {
-          logger.warn(`🚨 COORDINATED MOVEMENT DETECTED in ${entityCluster.entity}:`, {
-            markets: coordinatedMove.markets.length,
-            avgChange: coordinatedMove.averageChange.toFixed(2) + '%',
-            correlation: coordinatedMove.correlationScore.toFixed(2),
-            marketNames: coordinatedMove.markets.map(m => m.question?.substring(0, 30) + '...').join(', ')
-          });
-          
-          // Create leak detection signal
-          const leakSignal: EarlySignal = {
-            marketId: coordinatedMove.markets[0].id, // Primary market
-            market: coordinatedMove.markets[0],
-            signalType: 'coordinated_cross_market',
-            confidence: coordinatedMove.correlationScore,
-            timestamp: Date.now(),
-            metadata: {
-              severity: coordinatedMove.correlationScore > 0.7 ? 'critical' : 'high',
-              signalSource: 'cross_market_leak_detection',
-              entityCluster: entityCluster.entity,
-              correlatedMarkets: coordinatedMove.markets.map(m => m.id),
-              averageChange: coordinatedMove.averageChange,
-              correlationScore: coordinatedMove.correlationScore,
-              marketCount: coordinatedMove.markets.length,
-              leakType: 'coordinated_cross_market'
-            }
-          };
-          
+      // Update price history for all markets first
+      for (const market of markets) {
+        this.priceHistoryTracker.recordMarketUpdate(market);
+      }
+
+      // Detect coordinated movements using real price correlation
+      const correlationSignals = this.crossMarketDetector.detectAllCoordinatedMovements(markets);
+
+      // Process each correlation signal
+      for (const correlationSignal of correlationSignals) {
+        logger.warn(`🚨 REAL COORDINATED MOVEMENT DETECTED:`, {
+          markets: correlationSignal.markets.length,
+          correlation: correlationSignal.correlation.toFixed(2),
+          avgPriceChange: (correlationSignal.priceChanges.reduce((sum, c) => sum + Math.abs(c), 0) / correlationSignal.priceChanges.length).toFixed(2) + '%',
+          avgVolumeIncrease: (correlationSignal.volumeIncreases.reduce((sum, v) => sum + v, 0) / correlationSignal.volumeIncreases.length).toFixed(2) + 'x',
+          confidence: correlationSignal.confidence.toFixed(2),
+          windowMs: correlationSignal.windowMs / 1000 / 60 + ' minutes',
+          leakStartTime: correlationSignal.leakStartTime ? new Date(correlationSignal.leakStartTime).toISOString() : 'unknown'
+        });
+
+        // Convert to EarlySignal format
+        const leakSignal = this.crossMarketDetector.convertToEarlySignal(correlationSignal, markets);
+
+        if (leakSignal) {
           await this.handleSignal(leakSignal);
         }
       }
-      
+
+      // Periodically update baseline correlations (once per hour)
+      const now = Date.now();
+      const lastBaselineUpdate = (this as any)._lastBaselineUpdate || 0;
+      if (now - lastBaselineUpdate > 3600000) { // 1 hour
+        logger.info('Updating cross-market correlation baselines...');
+        this.crossMarketDetector.updateBaselines(markets);
+        (this as any)._lastBaselineUpdate = now;
+      }
+
+      // Periodically cleanup stale price history (once per day)
+      const lastCleanup = (this as any)._lastPriceHistoryCleanup || 0;
+      if (now - lastCleanup > 86400000) { // 24 hours
+        logger.info('Cleaning up stale price history...');
+        const cleaned = this.priceHistoryTracker.cleanupStaleMarkets(86400000); // Remove markets older than 24 hours
+        logger.info(`Cleaned up ${cleaned} stale market price histories`);
+        (this as any)._lastPriceHistoryCleanup = now;
+      }
+
+      // Log memory stats
+      const memoryStats = this.priceHistoryTracker.getMemoryStats();
+      logger.debug(`Price history memory: ${memoryStats.marketsTracked} markets, ` +
+        `${memoryStats.totalPricePoints} points, ${memoryStats.estimatedMemoryMB} MB`);
+
     } catch (error) {
       logger.error('Error detecting cross-market leaks:', error);
     }
