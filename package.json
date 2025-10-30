@@ -14,7 +14,7 @@
     "test:coverage": "jest --coverage",
     "test:unit": "jest src/__tests__/unit",
     "test:integration": "jest src/__tests__/integration",
-    "backtest": "ts-node src/cli/backtesting.ts",
+    "backtest": "ts-node scripts/run-backtest.ts",
     "test-stats": "ts-node src/cli/statistical-testing.ts",
     "config": "ts-node src/cli/config-cli-simple.ts",
     "config:show": "ts-node src/cli/config-cli-simple.ts show",
