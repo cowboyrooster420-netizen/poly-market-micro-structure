@@ -16,6 +16,7 @@
     "test:integration": "jest src/__tests__/integration",
     "backtest": "ts-node scripts/run-backtest.ts",
     "validate:frontrun": "ts-node scripts/validate-frontrunning.ts",
+    "validate:imbalance": "ts-node scripts/validate-orderbook-imbalance.ts",
     "test-stats": "ts-node src/cli/statistical-testing.ts",
     "config": "ts-node src/cli/config-cli-simple.ts",
     "config:show": "ts-node src/cli/config-cli-simple.ts show",
