@@ -54,6 +54,8 @@ export class CrossMarketCorrelationDetector {
   /**
    * Detect cross-market information leaks for a group of related markets
    * Returns signal if correlation spike detected
+   *
+   * PERFORMANCE OPTIMIZATION: Pre-filters markets to reduce O(N²) correlation calculations
    */
   detectCoordinatedMovement(markets: Market[]): CorrelationSignal | null {
     // Need at least minMarketsForSignal to detect coordination
@@ -61,23 +63,47 @@ export class CrossMarketCorrelationDetector {
       return null;
     }
 
-    // Filter markets with sufficient price history
-    const marketsWithHistory = markets.filter(m =>
-      this.priceTracker.hasSufficientHistory(m.id, 10)
-    );
+    // PERFORMANCE: Filter markets with sufficient price history AND significant movement
+    // This dramatically reduces the number of correlation calculations needed
+    const activeMarkets = markets.filter(m => {
+      // Must have price history
+      if (!this.priceTracker.hasSufficientHistory(m.id, 10)) {
+        return false;
+      }
 
-    if (marketsWithHistory.length < this.config.minMarketsForSignal) {
-      logger.info(`Not enough markets with price history: ${marketsWithHistory.length}/${markets.length}`, {
-        component: 'cross_market_detector',
-        operation: 'detect_coordination',
-        metadata: { marketsWithHistory: marketsWithHistory.length, totalMarkets: markets.length }
-      });
+      // OPTIMIZATION: Only check markets that have moved recently (>1% in last hour)
+      const priceChange = Math.abs(this.priceTracker.calculatePriceChange(m.id, 3600000)); // 1 hour
+      return priceChange > 1.0; // 1% minimum movement
+    });
+
+    if (activeMarkets.length < this.config.minMarketsForSignal) {
+      // Not enough actively moving markets - skip expensive correlation checks
       return null;
     }
 
+    // PERFORMANCE: Limit to top 50 most active markets to prevent O(N²) explosion
+    // 50 markets = 1,225 correlations vs 500 markets = 124,750 correlations
+    const limitedMarkets = activeMarkets
+      .sort((a, b) => {
+        const changeA = Math.abs(this.priceTracker.calculatePriceChange(a.id, 3600000));
+        const changeB = Math.abs(this.priceTracker.calculatePriceChange(b.id, 3600000));
+        return changeB - changeA; // Sort by largest price change
+      })
+      .slice(0, 50); // Top 50 most active
+
+    if (limitedMarkets.length < this.config.minMarketsForSignal) {
+      return null;
+    }
+
+    logger.info(`Pre-filtered ${markets.length} → ${limitedMarkets.length} active markets for correlation check`, {
+      component: 'cross_market_detector',
+      operation: 'pre_filter',
+      metadata: { originalCount: markets.length, filteredCount: limitedMarkets.length }
+    });
+
     // Test each correlation window
     for (const windowMs of this.config.correlationWindows) {
-      const signal = this.detectCorrelationSpike(marketsWithHistory, windowMs);
+      const signal = this.detectCorrelationSpike(limitedMarkets, windowMs);
       if (signal) {
         return signal;
       }
