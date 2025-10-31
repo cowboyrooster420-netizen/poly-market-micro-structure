@@ -266,6 +266,37 @@ export class PolymarketService {
 
   private transformMarket(data: any): Market | null {
     try {
+      // FILTER: Skip markets that are not ready for tracking
+      // These markets don't have asset IDs yet because they're not fully deployed on-chain
+      // Criteria: Must be active OR ready, must have a valid conditionId, and not be closed
+      const conditionId = data.condition_id || data.conditionId || '';
+      const isActive = data.active === true;
+      const isReady = data.ready === true;
+      const isClosed = data.closed === true;
+      const isDeploying = data.deploying === true;
+      const isPendingDeployment = data.pendingDeployment === true;
+      const hasValidConditionId = conditionId.length > 0;
+
+      // Skip if market is closed
+      if (isClosed) {
+        return null;
+      }
+
+      // Skip if market is still deploying or pending deployment
+      if (isDeploying || isPendingDeployment) {
+        return null;
+      }
+
+      // Skip if market is not active AND not ready (requires at least one to be true)
+      if (!isActive && !isReady) {
+        return null;
+      }
+
+      // Skip if no valid condition ID (critical for asset ID extraction)
+      if (!hasValidConditionId && !data.tokens && !data.asset_id && !data.outcome_tokens && !data.clobTokenIds) {
+        return null;
+      }
+
       // CRITICAL DEBUG: Always log first 3 markets to diagnose asset ID extraction issue
       const shouldDebug = this.marketCache.size < 3;
       if (shouldDebug) {
