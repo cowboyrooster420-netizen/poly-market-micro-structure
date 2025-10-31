@@ -256,10 +256,29 @@ export class EarlyBot {
     }
     
     // Track top markets with asset IDs for WebSocket subscriptions
-    const marketsToTrack = topMarkets.map(m => ({
+    // LIMIT: Polymarket WebSocket API has connection limits (~1000 subscriptions per connection)
+    // Track only the top 500 most liquid markets to ensure reliable WebSocket updates
+    const WEBSOCKET_MARKET_LIMIT = 500;
+    const sortedByVolume = [...topMarkets].sort((a, b) => b.volumeNum - a.volumeNum);
+    const limitedMarkets = sortedByVolume.slice(0, WEBSOCKET_MARKET_LIMIT);
+
+    const marketsToTrack = limitedMarkets.map(m => ({
       id: m.id,
       assetIds: m.metadata?.assetIds || []
     }));
+
+    advancedLogger.info(`📡 Subscribing to top ${marketsToTrack.length} markets by volume (WebSocket limit)`, {
+      component: 'bot',
+      operation: 'websocket_subscription',
+      metadata: {
+        totalMarkets: topMarkets.length,
+        subscribingTo: marketsToTrack.length,
+        limit: WEBSOCKET_MARKET_LIMIT,
+        minVolume: limitedMarkets[limitedMarkets.length - 1]?.volumeNum || 0,
+        maxVolume: limitedMarkets[0]?.volumeNum || 0
+      }
+    });
+
     this.microstructureDetector.trackMarkets(marketsToTrack);
 
     // Set up periodic market refresh
@@ -462,28 +481,33 @@ export class EarlyBot {
         });
       }
       
-      const newMarketIds = new Set(topMarkets.map(m => m.id));
+      // LIMIT: Only track top 500 most liquid markets (same as initial setup)
+      const WEBSOCKET_MARKET_LIMIT = 500;
+      const sortedByVolume = [...topMarkets].sort((a, b) => b.volumeNum - a.volumeNum);
+      const limitedMarkets = sortedByVolume.slice(0, WEBSOCKET_MARKET_LIMIT);
+
+      const newMarketIds = new Set(limitedMarkets.map(m => m.id));
       const currentMarketIds = new Set(this.microstructureDetector.getTrackedMarkets());
 
-      // Add new markets
-      const marketsToAdd = topMarkets.filter(m => !currentMarketIds.has(m.id));
+      // Add new markets (only from limited set)
+      const marketsToAdd = limitedMarkets.filter(m => !currentMarketIds.has(m.id));
       if (marketsToAdd.length > 0) {
         const newMarketsToTrack = marketsToAdd.map(m => ({
           id: m.id,
           assetIds: m.metadata?.assetIds || []
         }));
         this.microstructureDetector.trackMarkets(newMarketsToTrack);
-        logger.info(`Added ${marketsToAdd.length} new markets for tracking`);
+        logger.info(`Added ${marketsToAdd.length} new markets for tracking (top by volume)`);
       }
 
-      // Remove markets that no longer meet criteria
+      // Remove markets that no longer meet criteria (dropped out of top 500)
       const marketsToRemove = Array.from(currentMarketIds).filter(id => !newMarketIds.has(id));
       for (const marketId of marketsToRemove) {
         this.microstructureDetector.untrackMarket(marketId);
       }
-      
+
       if (marketsToRemove.length > 0) {
-        logger.info(`Removed ${marketsToRemove.length} markets from tracking`);
+        logger.info(`Removed ${marketsToRemove.length} markets from tracking (dropped out of top ${WEBSOCKET_MARKET_LIMIT})`);
       }
 
     } catch (error) {
