@@ -132,6 +132,12 @@ export class WebSocketService {
       return;
     }
 
+    // DEDUPLICATION: Skip if already subscribed
+    if (this.subscribedMarkets.has(marketId)) {
+      logger.debug(`Already subscribed to market: ${marketId}, skipping`);
+      return;
+    }
+
     // Polymarket Real-Time Data Service subscription format
     // OPTIMIZED: Only subscribe to orderbook data ('book')
     // - Removed 'price_change' (unused - just logs for debugging)
@@ -150,7 +156,7 @@ export class WebSocketService {
 
     this.sendMessage(subscribeMessage);
     this.subscribedMarkets.add(marketId);
-    
+
     logger.debug(`Subscribed to market: ${marketId}`);
   }
 
