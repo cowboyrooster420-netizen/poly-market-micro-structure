@@ -35,6 +35,8 @@ export class EnhancedPolymarketService extends PolymarketService {
   private readonly SYNC_INTERVAL_MS = 60000; // 1 minute
   private readonly BATCH_SIZE = 50;
   private isRunning = false;
+  private isSyncing = false; // Track if sync is currently in progress
+  private syncPromise: Promise<void> | null = null; // Track current sync operation
 
   constructor(config: BotConfig, dataLayer: DataAccessLayer) {
     super(config);
@@ -61,39 +63,77 @@ export class EnhancedPolymarketService extends PolymarketService {
 
   async stop(): Promise<void> {
     this.isRunning = false;
-    
+
+    // Stop the interval timer (prevents new sync cycles)
     if (this.syncInterval) {
       clearInterval(this.syncInterval);
       this.syncInterval = undefined;
     }
-    
+
+    // CRITICAL FIX: Wait for any in-progress sync to complete
+    // This prevents "SQLITE_MISUSE: Database handle is closed" errors
+    if (this.isSyncing && this.syncPromise) {
+      logger.info('Waiting for in-progress market sync to complete before stopping...');
+      try {
+        await this.syncPromise;
+        logger.info('In-progress sync completed');
+      } catch (error) {
+        logger.warn('Error waiting for sync to complete:', error);
+      }
+    }
+
     logger.info('Enhanced Polymarket service stopped');
   }
 
   private async startBackgroundSync(): Promise<void> {
     this.isRunning = true;
-    
-    // Initial sync
-    await this.syncMarkets();
-    
+
+    // Initial sync (wrapped to track state)
+    await this.runSyncWithTracking();
+
     // Set up periodic sync
     this.syncInterval = setInterval(async () => {
       if (this.isRunning) {
-        try {
-          await this.syncMarkets();
-        } catch (error) {
-          logger.error('Background market sync failed:', error);
-        }
+        await this.runSyncWithTracking();
       }
     }, this.SYNC_INTERVAL_MS);
-    
+
     logger.info(`Background market sync started (interval: ${this.SYNC_INTERVAL_MS}ms)`);
   }
 
+  // Wrapper to track sync state and prevent database access during shutdown
+  private async runSyncWithTracking(): Promise<void> {
+    // Skip if already syncing (prevent overlapping syncs)
+    if (this.isSyncing) {
+      logger.debug('Sync already in progress, skipping this cycle');
+      return;
+    }
+
+    this.isSyncing = true;
+    this.syncPromise = (async () => {
+      try {
+        await this.syncMarkets();
+      } catch (error) {
+        logger.error('Background market sync failed:', error);
+      } finally {
+        this.isSyncing = false;
+        this.syncPromise = null;
+      }
+    })();
+
+    await this.syncPromise;
+  }
+
   private async syncMarkets(): Promise<void> {
+    // SAFETY CHECK: Don't start sync if service is stopping
+    if (!this.isRunning) {
+      logger.debug('Service is stopping, skipping market synchronization');
+      return;
+    }
+
     const startTime = Date.now();
     logger.debug('Starting market synchronization...');
-    
+
     try {
       // Get fresh market data from API
       const apiMarkets = await super.getActiveMarkets();
@@ -105,6 +145,12 @@ export class EnhancedPolymarketService extends PolymarketService {
       
       // Process markets in batches
       for (let i = 0; i < apiMarkets.length; i += this.BATCH_SIZE) {
+        // Check if service is still running (allow graceful exit mid-sync)
+        if (!this.isRunning) {
+          logger.info('Service stopping, aborting market sync');
+          break;
+        }
+
         const batch = apiMarkets.slice(i, i + this.BATCH_SIZE);
         await this.processBatch(batch);
       }
@@ -229,25 +275,36 @@ export class EnhancedPolymarketService extends PolymarketService {
 
   async getMarketById(marketId: string): Promise<Market | null> {
     try {
+      // SAFETY CHECK: Don't access database if service is shutting down
+      if (!this.isRunning) {
+        logger.debug(`Service is shutting down, skipping database access for market ${marketId}`);
+        return super.getMarketById(marketId); // Fallback to API only
+      }
+
       // Try database first (faster)
       let market = await this.dataLayer.getMarket(marketId);
-      
+
       if (market) {
         return market;
       }
-      
+
       // Fallback to API
       market = await super.getMarketById(marketId);
-      
-      if (market) {
-        // Save to database for future use
+
+      if (market && this.isRunning) {
+        // Save to database for future use (only if still running)
         await this.dataLayer.saveMarket(market);
       }
-      
+
       return market;
-      
+
     } catch (error) {
-      logger.error(`Error getting market ${marketId}:`, error);
+      // Only log database errors if we're still running (otherwise it's expected during shutdown)
+      if (this.isRunning) {
+        logger.error(`Error getting market ${marketId}:`, error);
+      } else {
+        logger.debug(`Expected error during shutdown for market ${marketId}:`, error);
+      }
       return null;
     }
   }
