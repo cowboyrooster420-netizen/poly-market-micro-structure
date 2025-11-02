@@ -44,14 +44,21 @@ export class OrderbookAnalyzer {
     const signals: MicrostructureSignal[] = [];
     const metrics = this.analyzeOrderbook(orderbook);
     const buffer = this.orderbookBuffers.get(orderbook.marketId);
-    
-    if (!buffer || buffer.length() < 10) {
-      return signals; // Need historical data for comparison
+
+    // RELAXED THRESHOLDS: Allow signal detection for lower-volume markets
+    // OLD: Required 10+ updates (too strict - excluded most markets)
+    // NEW: Require only 3+ updates to enable broader market coverage
+    if (!buffer || buffer.length() < 3) {
+      return signals; // Need at least 3 orderbook updates for baseline
     }
 
     // Get historical baseline
-    const historical = buffer.getOrderbooksInWindow(5 * 60 * 1000); // 5 minutes
-    if (historical.length < 5) return signals;
+    // EXTENDED WINDOW: 15 minutes instead of 5 to capture slower markets
+    const historical = buffer.getOrderbooksInWindow(15 * 60 * 1000); // 15 minutes
+
+    // RELAXED: Require only 2+ updates in window (was 5)
+    // This allows signal detection even for markets with infrequent orderbook updates
+    if (historical.length < 2) return signals;
 
     // Check for orderbook imbalance
     const imbalanceSignal = this.detectOrderbookImbalance(metrics, historical);
