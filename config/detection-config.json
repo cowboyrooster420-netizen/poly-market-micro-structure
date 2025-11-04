@@ -7,7 +7,7 @@
         "minConfidence": 0.5
       },
       "priceMovement": {
-        "percentageThreshold": 3,
+        "percentageThreshold": 2,
         "timeWindowMs": 300000,
         "minVolume": 5000,
         "baselineExpectedChangePercent": 2
