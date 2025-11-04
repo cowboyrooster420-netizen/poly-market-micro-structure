@@ -198,9 +198,9 @@
     "alertPrioritization": {
       "enabled": true,
       "thresholds": {
-        "critical": 80,
-        "high": 60,
-        "medium": 40
+        "critical": 85,
+        "high": 70,
+        "medium": 50
       },
       "tierAdjustments": {
         "active": {
@@ -231,10 +231,10 @@
         }
       },
       "qualityFilters": {
-        "minOpportunityScore": 30,
-        "minCategoryScore": 1,
+        "minOpportunityScore": 65,
+        "minCategoryScore": 2,
         "requireNonBlacklisted": true,
-        "minVolumeRatio": 0.2
+        "minVolumeRatio": 0.35
       },
       "notifications": {
         "critical": {
@@ -250,7 +250,7 @@
           "includeChart": true
         },
         "medium": {
-          "enableDiscord": true,
+          "enableDiscord": false,
           "enableWebhook": false,
           "mentionEveryone": false,
           "includeChart": false
@@ -302,8 +302,8 @@
     "alerts": {
       "discordRateLimit": 10,
       "confidenceThresholds": {
-        "info": 0.6,
-        "warning": 0.75,
+        "info": 0.7,
+        "warning": 0.8,
         "critical": 0.9
       },
       "severityLevels": {
