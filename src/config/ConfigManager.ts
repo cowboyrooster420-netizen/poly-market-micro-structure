@@ -213,6 +213,13 @@ export interface DetectionThresholds {
       depth: number;               // Orderbook depth to analyze
       minSpreadBps: number;        // Minimum spread in basis points
     };
+    spreadAnomaly?: {
+      threshold: number;           // Normalized spread change threshold (std devs)
+      minVolatility: number;       // Minimum spread volatility to consider
+    };
+    liquidityShift?: {
+      threshold: number;           // Liquidity score change threshold (0-100)
+    };
     liquidityVacuum: {
       depthDropThreshold: number;  // % drop in orderbook depth
       spreadWidenThreshold: number; // Spread widening multiplier

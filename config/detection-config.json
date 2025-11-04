@@ -269,6 +269,13 @@
         "depth": 20,
         "minSpreadBps": 5
       },
+      "spreadAnomaly": {
+        "threshold": 1.0,
+        "minVolatility": 0.0001
+      },
+      "liquidityShift": {
+        "threshold": 12
+      },
       "liquidityVacuum": {
         "depthDropThreshold": 15,
         "spreadWidenThreshold": 1.5,
