@@ -7,7 +7,7 @@
         "minConfidence": 0.5
       },
       "priceMovement": {
-        "percentageThreshold": 3,
+        "percentageThreshold": 2,
         "timeWindowMs": 300000,
         "minVolume": 5000,
         "baselineExpectedChangePercent": 2
@@ -268,6 +268,13 @@
         "threshold": 0.15,
         "depth": 20,
         "minSpreadBps": 5
+      },
+      "spreadAnomaly": {
+        "threshold": 1.0,
+        "minVolatility": 0.0001
+      },
+      "liquidityShift": {
+        "threshold": 12
       },
       "liquidityVacuum": {
         "depthDropThreshold": 15,

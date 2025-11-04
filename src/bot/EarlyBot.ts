@@ -52,8 +52,8 @@ export class EarlyBot {
       },
       microstructure: {
         orderbookImbalanceThreshold: systemConfig.detection.microstructure.orderbookImbalance.threshold,
-        spreadAnomalyThreshold: systemConfig.detection.microstructure.frontRunning.spreadImpactThreshold,
-        liquidityShiftThreshold: systemConfig.detection.microstructure.liquidityVacuum.depthDropThreshold,
+        spreadAnomalyThreshold: systemConfig.detection.microstructure.spreadAnomaly?.threshold || 1.0,
+        liquidityShiftThreshold: systemConfig.detection.microstructure.liquidityShift?.threshold || 12,
         tickBufferSize: systemConfig.performance.memory.maxRingBufferSize,
       },
       discord: {
@@ -678,8 +678,9 @@ export class EarlyBot {
       severity: signal.severity,
     });
 
-    // Send microstructure alert for high-confidence signals
-    if (signal.confidence > 0.8 && this.config.discord.webhookUrl) {
+    // Send microstructure alert for medium-confidence signals (lowered from 0.8 to 0.6)
+    // Microstructure signals typically have lower confidence than market-level signals
+    if (signal.confidence > 0.6 && this.config.discord.webhookUrl) {
       try {
         await this.discordAlerter.sendMicrostructureAlert(signal);
       } catch (error) {
@@ -982,7 +983,8 @@ export class EarlyBot {
       this.config.minVolumeThreshold = newConfig.detection.markets.minVolumeThreshold;
       this.config.maxMarketsToTrack = newConfig.detection.markets.maxMarketsToTrack;
       this.config.microstructure.orderbookImbalanceThreshold = newConfig.detection.microstructure.orderbookImbalance.threshold;
-      this.config.microstructure.liquidityShiftThreshold = newConfig.detection.microstructure.liquidityVacuum.depthDropThreshold;
+      this.config.microstructure.spreadAnomalyThreshold = newConfig.detection.microstructure.spreadAnomaly?.threshold || 1.0;
+      this.config.microstructure.liquidityShiftThreshold = newConfig.detection.microstructure.liquidityShift?.threshold || 12;
       this.config.discord.alertRateLimit = newConfig.detection.alerts.discordRateLimit;
       
       // Log configuration changes
