@@ -257,8 +257,9 @@ export class EarlyBot {
     
     // Track top markets with asset IDs for WebSocket subscriptions
     // LIMIT: Polymarket WebSocket API has connection limits (~1000 subscriptions per connection)
-    // Track only the top 500 most liquid markets to ensure reliable WebSocket updates
-    const WEBSOCKET_MARKET_LIMIT = 500;
+    // Each market has ~2 asset IDs, so 250 markets = ~500 subscriptions (safe margin)
+    // REDUCED from 500 to 250 to prevent WebSocket disconnections (code 1006)
+    const WEBSOCKET_MARKET_LIMIT = 250;
     const sortedByVolume = [...topMarkets].sort((a, b) => b.volumeNum - a.volumeNum);
     const limitedMarkets = sortedByVolume.slice(0, WEBSOCKET_MARKET_LIMIT);
 
@@ -481,8 +482,9 @@ export class EarlyBot {
         });
       }
       
-      // LIMIT: Only track top 500 most liquid markets (same as initial setup)
-      const WEBSOCKET_MARKET_LIMIT = 500;
+      // LIMIT: Only track top 250 most liquid markets (same as initial setup)
+      // Reduced from 500 to prevent WebSocket disconnections (code 1006)
+      const WEBSOCKET_MARKET_LIMIT = 250;
       const sortedByVolume = [...topMarkets].sort((a, b) => b.volumeNum - a.volumeNum);
       const limitedMarkets = sortedByVolume.slice(0, WEBSOCKET_MARKET_LIMIT);
 
@@ -500,7 +502,7 @@ export class EarlyBot {
         logger.info(`Added ${marketsToAdd.length} new markets for tracking (top by volume)`);
       }
 
-      // Remove markets that no longer meet criteria (dropped out of top 500)
+      // Remove markets that no longer meet criteria (dropped out of top 250)
       const marketsToRemove = Array.from(currentMarketIds).filter(id => !newMarketIds.has(id));
       for (const marketId of marketsToRemove) {
         this.microstructureDetector.untrackMarket(marketId);
