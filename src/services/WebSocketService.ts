@@ -11,6 +11,7 @@ export class WebSocketService {
   private config: BotConfig;
   private ws: WebSocket | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null; // Keepalive ping timer
   private isConnected = false;
   private isConnecting = false; // Prevent concurrent connection attempts
   private reconnectAttempts = 0;
@@ -25,6 +26,10 @@ export class WebSocketService {
   // Validation constants
   private readonly MAX_MESSAGE_SIZE = 50000; // 50KB
   private readonly MAX_ORDERBOOK_LEVELS = 100;
+
+  // Heartbeat settings
+  private readonly HEARTBEAT_INTERVAL = 30000; // Send ping every 30 seconds
+  private isAlive = false;
 
   // Event handlers
   private onTickHandler: ((tick: TickData) => void) | null = null;
@@ -72,15 +77,25 @@ export class WebSocketService {
         this.isConnected = true;
         this.isConnecting = false;
         this.reconnectAttempts = 0;
+        this.isAlive = true;
         logger.info('🔌 WebSocket connected to Polymarket Real-Time Data Service');
 
         if (this.onConnectionHandler) {
           this.onConnectionHandler(true);
         }
 
+        // Start heartbeat to keep connection alive
+        this.startHeartbeat();
+
         // Resubscribe to markets if any
         this.resubscribeToMarkets();
         resolve();
+      });
+
+      // Listen for pong responses to confirm connection is alive
+      this.ws.on('pong', () => {
+        this.isAlive = true;
+        logger.debug('WebSocket pong received - connection alive');
       });
 
       this.ws.on('message', (data: WebSocket.Data) => {
@@ -91,6 +106,7 @@ export class WebSocketService {
         clearTimeout(timeoutId); // Clear timeout on close as well
         this.isConnected = false;
         this.isConnecting = false;
+        this.stopHeartbeat(); // Stop heartbeat on disconnect
         logger.warn(`WebSocket closed: ${code} - ${reason}`);
 
         if (this.onConnectionHandler) {
@@ -114,6 +130,8 @@ export class WebSocketService {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+
+    this.stopHeartbeat();
 
     if (this.ws) {
       this.ws.close();
@@ -509,5 +527,51 @@ export class WebSocketService {
         logger.error('Reconnection failed:', error);
       }
     }, delay);
+  }
+
+  /**
+   * Start heartbeat mechanism to keep WebSocket connection alive
+   * Sends ping every 30 seconds to prevent server-side timeout
+   */
+  private startHeartbeat(): void {
+    // Clear any existing heartbeat timer
+    this.stopHeartbeat();
+
+    // Send ping every 30 seconds
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws && this.isConnected) {
+        // Check if we received pong from last ping
+        if (!this.isAlive) {
+          logger.warn('WebSocket heartbeat failed - no pong received, terminating connection');
+          this.ws.terminate();
+          return;
+        }
+
+        // Mark as not alive until we receive pong
+        this.isAlive = false;
+
+        // Send ping
+        this.ws.ping((err: Error | undefined) => {
+          if (err) {
+            logger.error('WebSocket ping error:', err);
+          } else {
+            logger.debug('WebSocket ping sent');
+          }
+        });
+      }
+    }, this.HEARTBEAT_INTERVAL);
+
+    logger.info(`WebSocket heartbeat started (interval: ${this.HEARTBEAT_INTERVAL}ms)`);
+  }
+
+  /**
+   * Stop heartbeat mechanism
+   */
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+      logger.debug('WebSocket heartbeat stopped');
+    }
   }
 }
