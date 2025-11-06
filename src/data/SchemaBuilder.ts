@@ -304,6 +304,7 @@ export class SchemaBuilder {
       CREATE INDEX IF NOT EXISTS idx_markets_volume ON markets(volume ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_markets_closed ON markets(closed);
       CREATE INDEX IF NOT EXISTS idx_markets_category ON markets(category, volume ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_markets_category_enddate ON markets(category, end_date);
       CREATE INDEX IF NOT EXISTS idx_markets_blacklisted ON markets(is_blacklisted);
       CREATE INDEX IF NOT EXISTS idx_markets_tier ON markets(tier, tier_priority ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_markets_tier_updated ON markets(tier, tier_updated_at ${this.descKeyword()});
@@ -313,6 +314,7 @@ export class SchemaBuilder {
       -- Time-series data indexes
       CREATE INDEX IF NOT EXISTS idx_market_prices_market_time ON market_prices(market_id, timestamp ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_market_prices_time ON market_prices(timestamp ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_market_prices_outcome ON market_prices(market_id, outcome_index, timestamp ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_orderbook_market_time ON orderbook_snapshots(market_id, timestamp ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_orderbook_time ON orderbook_snapshots(timestamp ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_trade_ticks_market_time ON trade_ticks(market_id, timestamp ${this.descKeyword()});
@@ -321,6 +323,8 @@ export class SchemaBuilder {
       -- Signal indexes
       CREATE INDEX IF NOT EXISTS idx_signals_market_time ON signals(market_id, timestamp ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_signals_type ON signals(signal_type);
+      CREATE INDEX IF NOT EXISTS idx_signals_type_time ON signals(signal_type, timestamp ${this.descKeyword()});
+      CREATE INDEX IF NOT EXISTS idx_signals_type_confidence ON signals(signal_type, confidence ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_signals_validated ON signals(validated, timestamp ${this.descKeyword()});
       CREATE INDEX IF NOT EXISTS idx_signals_time ON signals(timestamp ${this.descKeyword()});
 
