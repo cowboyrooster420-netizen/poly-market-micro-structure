@@ -678,9 +678,9 @@ export class EarlyBot {
       severity: signal.severity,
     });
 
-    // Send microstructure alert for medium-confidence signals (lowered from 0.8 to 0.6)
+    // Send microstructure alert for medium-confidence signals (lowered to 0.4)
     // Microstructure signals typically have lower confidence than market-level signals
-    if (signal.confidence > 0.6 && this.config.discord.webhookUrl) {
+    if (signal.confidence > 0.4 && this.config.discord.webhookUrl) {
       try {
         await this.discordAlerter.sendMicrostructureAlert(signal);
       } catch (error) {
