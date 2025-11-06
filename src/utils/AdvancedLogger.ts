@@ -641,18 +641,18 @@ export class AdvancedLogger {
   }
 
   private setupDefaultAlertConfigs(): void {
-    // Critical errors
+    // Critical errors - Keep Discord for truly critical issues
     this.configureAlert('critical_errors', {
       level: 'critical',
-      channels: ['console', 'discord', 'database'],
+      channels: ['console', 'database'],  // Removed discord - too noisy
       rateLimit: { maxAlerts: 5, windowMs: 5 * 60 * 1000 },
       conditions: { minSeverity: 'critical' }
     });
 
-    // High error rates
+    // High error rates - Only for market analysis errors
     this.configureAlert('high_error_rate', {
       level: 'error',
-      channels: ['console', 'discord'],
+      channels: ['console', 'database'],  // Removed discord
       rateLimit: { maxAlerts: 3, windowMs: 10 * 60 * 1000 },
       conditions: { minSeverity: 'high', operation: ['market_analysis', 'signal_detection'] }
     });
