@@ -490,7 +490,7 @@ export class MicrostructureDetector {
     });
 
     // Convert to EarlySignal format for Discord alerts
-    if (flowSignal.confidence > 0.6) { // Only alert on high-confidence flow signals
+    if (flowSignal.confidence > 0.4) { // Only alert on medium+ confidence flow signals
       const earlySignal: EarlySignal = {
         marketId,
         market: {} as Market, // Will be enriched later
