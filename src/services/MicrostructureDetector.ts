@@ -329,7 +329,8 @@ export class MicrostructureDetector {
       }
       
       // 2. STEALTH ACCUMULATION DETECTION (OBI surge with stable spread)
-      if (metrics.imbalanceZScore > 3 && Math.abs(metrics.spreadChange) < 10) {
+      // Lowered from Z>3 to Z>2 to catch more subtle informed trading
+      if (metrics.imbalanceZScore > 2 && Math.abs(metrics.spreadChange) < 10) {
         logger.warn(`🕵️  STEALTH ACCUMULATION detected in ${marketId.substring(0, 8)}...`, {
           imbalanceZScore: metrics.imbalanceZScore.toFixed(2),
           spreadChange: metrics.spreadChange.toFixed(1) + '%',
@@ -386,8 +387,9 @@ export class MicrostructureDetector {
       const now = new Date(metrics.timestamp);
       const hour = now.getHours();
       const isOffHours = hour < 6 || hour > 22; // 10 PM - 6 AM EST
-      
-      if (isOffHours && (metrics.volumeZScore > 3 || metrics.depthZScore > 3)) {
+
+      // Lowered from Z>3 to Z>2 to catch more subtle off-hours informed trading
+      if (isOffHours && (metrics.volumeZScore > 2 || metrics.depthZScore > 2)) {
         logger.warn(`🌙 OFF-HOURS ANOMALY detected in ${marketId.substring(0, 8)}...`, {
           hour: hour,
           volumeZ: metrics.volumeZScore.toFixed(2),

@@ -38,7 +38,7 @@ export class CrossMarketCorrelationDetector {
     this.baselineCorrelations = new Map();
 
     this.config = {
-      minCorrelation: config?.minCorrelation || 0.7,
+      minCorrelation: config?.minCorrelation || 0.6, // Lowered from 0.7 to catch weaker coordinated movements
       correlationWindows: config?.correlationWindows || [
         3600000,  // 1 hour
         14400000, // 4 hours

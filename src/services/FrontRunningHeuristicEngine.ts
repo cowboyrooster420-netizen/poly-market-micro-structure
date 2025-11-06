@@ -225,7 +225,7 @@ export class FrontRunningHeuristicEngine {
     // Base confidence from microstructure strength
     if (metrics.microPriceDrift > 0.001) confidence += 0.3;
     if (metrics.liquidityVacuum) confidence += 0.2;
-    if (metrics.imbalanceZScore > 3) confidence += 0.2;
+    if (metrics.imbalanceZScore > 2) confidence += 0.2; // Lowered from 3 to 2
     
     // Bonus from cross-market confirmation
     if (correlatedMarkets.length >= 2) confidence += 0.2;
@@ -233,8 +233,8 @@ export class FrontRunningHeuristicEngine {
     
     // Z-score strength bonus
     const avgZScore = (metrics.depthZScore + metrics.imbalanceZScore + metrics.volumeZScore) / 3;
-    if (avgZScore > 3) confidence += 0.1;
-    if (avgZScore > 5) confidence += 0.1;
+    if (avgZScore > 2) confidence += 0.1; // Lowered from 3 to 2
+    if (avgZScore > 4) confidence += 0.1; // Lowered from 5 to 4
     
     // Off-hours bonus (higher confidence for off-hours signals)
     if (components.offHoursMultiplier > 1) confidence += 0.1;

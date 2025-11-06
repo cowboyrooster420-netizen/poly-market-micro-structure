@@ -301,7 +301,7 @@
       }
     },
     "markets": {
-      "minVolumeThreshold": 15000,
+      "minVolumeThreshold": 5000,
       "maxMarketsToTrack": 100,
       "refreshIntervalMs": 300000,
       "inactivityTimeoutMs": 3600000
