@@ -2,12 +2,12 @@
   "detection": {
     "signals": {
       "volumeSpike": {
-        "multiplier": 1.3,
+        "multiplier": 1.5,
         "windowMs": 180000,
-        "minConfidence": 0.4
+        "minConfidence": 0.5
       },
       "priceMovement": {
-        "percentageThreshold": 2,
+        "percentageThreshold": 3,
         "timeWindowMs": 300000,
         "minVolume": 5000,
         "baselineExpectedChangePercent": 2
@@ -18,8 +18,8 @@
         "zScoreThreshold": 1.5
       },
       "activityDetection": {
-        "baselineActivityScore": 35,
-        "activityThreshold": 50
+        "baselineActivityScore": 40,
+        "activityThreshold": 60
       }
     },
     "marketFiltering": {
@@ -269,13 +269,6 @@
         "depth": 20,
         "minSpreadBps": 5
       },
-      "spreadAnomaly": {
-        "threshold": 1.0,
-        "minVolatility": 0.0001
-      },
-      "liquidityShift": {
-        "threshold": 12
-      },
       "liquidityVacuum": {
         "depthDropThreshold": 15,
         "spreadWidenThreshold": 1.5,
@@ -285,6 +278,13 @@
         "scoreThreshold": 0.5,
         "volumeWeightThreshold": 0.4,
         "spreadImpactThreshold": 1.2
+      },
+      "spreadAnomaly": {
+        "threshold": 1,
+        "minVolatility": 0.0001
+      },
+      "liquidityShift": {
+        "threshold": 12
       }
     },
     "statistical": {

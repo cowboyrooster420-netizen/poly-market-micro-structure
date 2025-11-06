@@ -263,6 +263,63 @@ export class PriceHistoryTracker {
   }
 
   /**
+   * Aggressive memory cleanup - trim buffers and evict inactive markets
+   * Call this when system memory is high
+   */
+  aggressiveCleanup(targetMemoryReductionPercent: number = 50): void {
+    const initialStats = this.getMemoryStats();
+    const now = Date.now();
+
+    logger.warn(`Starting aggressive memory cleanup (target: ${targetMemoryReductionPercent}% reduction)`, {
+      component: 'price_history_tracker',
+      operation: 'aggressive_cleanup',
+      metadata: {
+        initialMarketsTracked: initialStats.marketsTracked,
+        initialMemoryMB: initialStats.estimatedMemoryMB
+      }
+    });
+
+    // Step 1: Remove stale markets (older than 6 hours instead of 24)
+    const staleRemoved = this.cleanupStaleMarkets(21600000); // 6 hours
+
+    // Step 2: Trim buffer sizes for remaining markets to 50% capacity
+    for (const buffer of this.priceBuffers.values()) {
+      buffer.trimToSize(Math.floor(this.bufferSize / 2));
+    }
+
+    // Step 3: If still need more reduction, evict least recently used markets
+    const currentStats = this.getMemoryStats();
+    const memoryReduction = ((initialStats.estimatedMemoryMB - currentStats.estimatedMemoryMB) / initialStats.estimatedMemoryMB) * 100;
+
+    if (memoryReduction < targetMemoryReductionPercent) {
+      // Evict 25% of markets (least recently used)
+      const marketsToEvict = Math.floor(this.priceBuffers.size * 0.25);
+      const sortedMarkets = Array.from(this.lastUpdateTime.entries())
+        .sort((a, b) => a[1] - b[1]) // Sort by last update time (oldest first)
+        .slice(0, marketsToEvict)
+        .map(entry => entry[0]);
+
+      for (const marketId of sortedMarkets) {
+        this.clearMarket(marketId);
+      }
+    }
+
+    const finalStats = this.getMemoryStats();
+    const totalReduction = ((initialStats.estimatedMemoryMB - finalStats.estimatedMemoryMB) / initialStats.estimatedMemoryMB) * 100;
+
+    logger.info(`Aggressive cleanup completed - reduced memory by ${totalReduction.toFixed(1)}%`, {
+      component: 'price_history_tracker',
+      operation: 'aggressive_cleanup',
+      metadata: {
+        initialMemoryMB: initialStats.estimatedMemoryMB,
+        finalMemoryMB: finalStats.estimatedMemoryMB,
+        marketsRemoved: initialStats.marketsTracked - finalStats.marketsTracked,
+        staleMarketsRemoved: staleRemoved
+      }
+    });
+  }
+
+  /**
    * Get current price for a market (most recent price point)
    */
   getCurrentPrice(marketId: string): number | null {

@@ -88,6 +88,23 @@ export class RingBuffer<T> {
     this.buffer = undefined as any;
   }
 
+  /**
+   * Trim buffer to specified size (for aggressive memory cleanup)
+   * Keeps the most recent items
+   */
+  trimToSize(newSize: number): void {
+    if (newSize >= this.count) return; // Nothing to trim
+
+    // Keep only the last newSize items
+    const itemsToKeep = this.getLast(newSize);
+
+    // Clear and recreate buffer
+    this.clear();
+    for (const item of itemsToKeep) {
+      this.push(item);
+    }
+  }
+
   // Get items within a time window (for time-series data)
   getWithinTimeWindow(windowMs: number, timestampExtractor: (item: T) => number): T[] {
     if (this.count === 0) return [];
