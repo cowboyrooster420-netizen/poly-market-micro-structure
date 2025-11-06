@@ -13,22 +13,27 @@ dotenv.config();
 async function checkWebSocket() {
   console.log('🔍 Checking WebSocket connectivity...\n');
 
-  // Create minimal config
+  // Create complete config matching BotConfig interface
   const config = {
-    clob: {
-      apiUrl: process.env.CLOB_API_URL || 'https://clob.polymarket.com',
-      wsUrl: 'wss://ws-subscriptions-clob.polymarket.com/ws/market'
+    checkIntervalMs: 30000,
+    minVolumeThreshold: 5000,
+    maxMarketsToTrack: 100,
+    logLevel: 'info',
+    apiUrls: {
+      clob: process.env.CLOB_API_URL || 'https://clob.polymarket.com',
+      gamma: process.env.GAMMA_API_URL || 'https://gamma-api.polymarket.com'
     },
-    gamma: {
-      apiUrl: process.env.GAMMA_API_URL || 'https://gamma-api.polymarket.com'
+    microstructure: {
+      orderbookImbalanceThreshold: 0.15,
+      spreadAnomalyThreshold: 2.0,
+      liquidityShiftThreshold: 20,
+      tickBufferSize: 1000
     },
     discord: {
       webhookUrl: process.env.DISCORD_WEBHOOK_URL || '',
-      richEmbeds: true,
-      rateLimit: 10
-    },
-    minVolumeThreshold: 5000,
-    checkIntervalMs: 30000
+      enableRichEmbeds: true,
+      alertRateLimit: 10
+    }
   };
 
   try {
