@@ -57,12 +57,12 @@ export class MetricsCollector {
   
   // Thresholds for alerting
   private thresholds: MetricThreshold[] = [
-    { metric: 'cpu.usage', warning: 70, critical: 90, unit: '%' },
-    { metric: 'memory.percentage', warning: 80, critical: 95, unit: '%' },
-    { metric: 'eventLoop.lag', warning: 100, critical: 500, unit: 'ms' },
-    { metric: 'application.errorRate', warning: 5, critical: 10, unit: 'errors/min' },
-    { metric: 'application.responseTime', warning: 2000, critical: 5000, unit: 'ms' },
-    { metric: 'application.healthScore', warning: 70, critical: 50, unit: 'score', inverted: true }
+    { metric: 'cpu.usage', warning: 80, critical: 95, unit: '%' },
+    { metric: 'memory.percentage', warning: 85, critical: 95, unit: '%' },
+    { metric: 'eventLoop.lag', warning: 200, critical: 1000, unit: 'ms' },
+    { metric: 'application.errorRate', warning: 10, critical: 20, unit: 'errors/min' },
+    { metric: 'application.responseTime', warning: 6000, critical: 10000, unit: 'ms' },  // Increased to reduce noise
+    { metric: 'application.healthScore', warning: 40, critical: 20, unit: 'score', inverted: true }  // Lowered warning threshold
   ];
 
   constructor() {
